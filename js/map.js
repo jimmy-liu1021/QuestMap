@@ -1,4 +1,4 @@
-function createQuestMap(element, locate, report, onPosition) {
+function createQuestMap(element, locate, report, onPosition, addActions) {
   if (!window.L?.markerClusterGroup) {
     element.textContent = '地圖套件載入失敗。連上網路後請重新開啟頁面。';
     locate.disabled = true;
@@ -18,6 +18,7 @@ function createQuestMap(element, locate, report, onPosition) {
 
   const cluster = L.markerClusterGroup({ removeOutsideVisibleBounds: true });
   cluster.addTo(map);
+  const routeLine = L.polyline([], { color: '#2355b5', weight: 4, dashArray: '7 8', interactive: false }).addTo(map);
   const icon = L.divIcon({ className: 'quest-pin', iconSize: [24, 24], iconAnchor: [12, 12] });
 
   function popup(record) {
@@ -43,41 +44,77 @@ function createQuestMap(element, locate, report, onPosition) {
     link.rel = 'noopener noreferrer';
     link.textContent = 'Google Maps 導航';
     content.append(link);
+    addActions(content, record);
     return content;
   }
 
   let position;
+  let popupOpen = false;
+  map.on('popupopen', () => { popupOpen = true; });
+  map.on('popupclose', () => { popupOpen = false; });
+  let watch = null;
+  let started = false;
+  let watchGeneration = 0;
+  let resumeFollowing = false;
+  function stopFollowing() {
+    watchGeneration++;
+    if (watch !== null) navigator.geolocation.clearWatch(watch);
+    watch = null;
+    started = false;
+    locate.textContent = '跟隨定位';
+    locate.setAttribute('aria-pressed', 'false');
+  }
   function locateUser() {
-    if (locate.disabled) return;
+    if (started) return;
     if (!navigator.geolocation) {
       report('瀏覽器無法使用定位');
       return;
     }
-    locate.disabled = true;
+    started = true;
+    const generation = ++watchGeneration;
+    locate.textContent = '停止跟隨';
+    locate.setAttribute('aria-pressed', 'true');
     report('正在定位…');
-    navigator.geolocation.getCurrentPosition(({ coords }) => {
-      locate.disabled = false;
+    let first = true;
+    watch = navigator.geolocation.watchPosition(({ coords }) => {
+      if (!started || generation !== watchGeneration) return;
       const point = [coords.latitude, coords.longitude];
-      position?.remove();
-      position = L.circleMarker(point, { radius: 8 }).addTo(map).bindTooltip('目前位置');
-      report('顯示目前位置 5 公里內的任務');
-      onPosition(coords);
+      if (position) position.setLatLng(point);
+      else position = L.circleMarker(point, { radius: 8, className: 'current-location' }).addTo(map).bindTooltip('目前位置');
+      onPosition(coords, first);
+      if (!first && !popupOpen) map.panTo(point, { animate: false });
+      first = false;
+      report('');
     }, error => {
-      locate.disabled = false;
+      if (!started || generation !== watchGeneration) return;
+      if (error.code === 1) stopFollowing();
       report(error.code === 1 ? '定位權限未開啟，請確認 Safari 設定與 HTTPS' : '目前無法取得位置');
-    }, { timeout: 12000 });
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 });
   }
-  locate.addEventListener('click', locateUser);
+  locate.addEventListener('click', () => {
+    if (started) stopFollowing();
+    else locateUser();
+  });
+  window.addEventListener('pagehide', () => {
+    resumeFollowing = started;
+    stopFollowing();
+  });
+  window.addEventListener('pageshow', event => {
+    if (event.persisted && resumeFollowing) locateUser();
+  });
 
   let renderId = 0;
+  let rendered = [];
   function render(records, fit, center) {
-    const id = ++renderId;
-    cluster.clearLayers();
     if (fit && (records.length || center)) {
       const bounds = L.latLngBounds(records.map(record => [record.lat, record.lng]));
       if (center) bounds.extend([center.latitude, center.longitude]);
       map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16, animate: false });
     }
+    if (rendered.length === records.length && rendered.every((record, index) => record === records[index])) return;
+    rendered = records;
+    const id = ++renderId;
+    cluster.clearLayers();
 
     let offset = 0;
     function addBatch() {
@@ -93,6 +130,11 @@ function createQuestMap(element, locate, report, onPosition) {
     if (records.length) requestAnimationFrame(addBatch);
   }
 
-  return { render, locateUser };
+  function showRoute(stops, origin) {
+    const points = stops.map(stop => [stop.lat, stop.lng]);
+    if (points.length && origin) points.unshift([origin.lat, origin.lng]);
+    routeLine.setLatLngs(points);
+  }
+  return { render, locateUser, stopFollowing, showRoute };
 }
 

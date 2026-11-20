@@ -27,8 +27,17 @@
       <div class="toolbar-row">
         <p class="total"><output id="count" aria-live="polite">0</output> 個補給站<br><span id="range">全部範圍</span></p>
         <button type="button" id="fit">全覽</button>
-        <button type="button" id="locate">定位</button>
+        <button type="button" id="locate" aria-pressed="false">跟隨定位</button>
       </div>
+      <details id="trip">
+        <summary>路線與完成任務 <span id="trip-count"></span></summary>
+        <div class="trip-body">
+          <p id="trip-hint">點選地圖站點加入路線。</p>
+          <ol id="trip-stops"></ol>
+          <div id="trip-links"></div>
+          <label class="finished-toggle"><input type="checkbox" id="show-completed">顯示已完成任務 <span id="completed-count"></span></label>
+        </div>
+      </details>
       <details id="filters">
         <summary>任務與獎勵篩選</summary>
         <div class="filter-body">
@@ -55,6 +64,7 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="js/parser.js"></script>
   <script src="js/filters.js"></script>
+  <script src="js/route.js"></script>
   <script src="js/map.js"></script>
   <script src="js/app.js"></script>
 </body>

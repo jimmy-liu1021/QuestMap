@@ -5,7 +5,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $html = [IO.File]::ReadAllText("$root/index.html")
 $css = [IO.File]::ReadAllText("$root/css/style.css")
 $html = $html.Replace('<link rel="stylesheet" href="css/style.css">', "<style>`n$css</style>")
-foreach ($module in 'parser', 'filters', 'map', 'app') {
+foreach ($module in 'parser', 'filters', 'route', 'map', 'app') {
     $source = [IO.File]::ReadAllText("$root/js/$module.js")
     $html = $html.Replace(('<script src="js/{0}.js"></script>' -f $module), "<script>`n$source</script>")
 }

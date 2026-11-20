@@ -1,6 +1,6 @@
 """Collect tasks through serial, ordinary drags of the visible map."""
 import json
-from math import asinh, radians, tan
+from math import asinh, hypot, radians, tan
 from time import monotonic
 
 from plan_area_scan import circle_coverage, plan
@@ -66,9 +66,14 @@ def sweep(page, options, report, initial_body, initial_bounds, request_times, ne
         if before >= MAX_QUEST_REQUESTS:
             return "scan_request_budget_reached", None
         x, y = box["x"] + width / 2, box["y"] + height * 0.47
-        page.mouse.move(x - delta_x / 2, y - delta_y / 2)
+        start_x, start_y = x - delta_x / 2, y - delta_y / 2
+        distance = hypot(delta_x, delta_y)
+        nudge_x, nudge_y = 6 * delta_x / distance, 6 * delta_y / distance
+        page.mouse.move(start_x, start_y)
         page.mouse.down()
-        page.mouse.move(x + delta_x / 2, y + delta_y / 2, steps=12)
+        # Cross the map's click tolerance before applying the measured drag.
+        page.mouse.move(start_x + nudge_x, start_y + nudge_y)
+        page.mouse.move(start_x + nudge_x + delta_x, start_y + nudge_y + delta_y, steps=12)
         page.wait_for_timeout(200)
         page.mouse.up()
         outcome, bounds, body = next_response(before)

@@ -90,6 +90,16 @@ legend { font-size: .875rem; font-weight: 650; }
 .choices input { accent-color: #206b49; width: 1rem; height: 1rem; flex-shrink: 0; }
 .status { margin: .25rem 0; font-size: .875rem; overflow-wrap: anywhere; }
 .status.stale { color: #8a3d09; font-weight: 650; }
+.trip-body { padding: 0 .2rem .5rem; }
+.trip-body p { font-size: .875rem; margin: .25rem 0; }
+#trip-stops { margin: .3rem 0; padding-left: 1.55rem; max-height: 9rem; overflow: auto; }
+#trip-stops:empty, #trip-links:empty { display: none; }
+#trip-stops li { padding: .15rem 0; overflow-wrap: anywhere; }
+#trip-stops button { margin-inline-start: .5rem; }
+#trip-links { display: flex; flex-wrap: wrap; gap: .35rem; }
+#trip-links .directions { display: inline-flex; align-items: center; padding: .3rem .55rem; font-weight: 650; }
+.finished-toggle { display: flex; gap: .45rem; align-items: center; min-height: 44px; }
+.finished-toggle input { width: 1.05rem; height: 1.05rem; accent-color: #206b49; }
 .status:empty, .map-notice:empty { display: none; }
 .map-area { position: relative; flex: 1; min-height: 0; }
 #map { position: absolute; inset: 0; background: #e3ede3; }
@@ -145,8 +155,17 @@ legend { font-size: .875rem; font-weight: 650; }
       <div class="toolbar-row">
         <p class="total"><output id="count" aria-live="polite">0</output> 個補給站<br><span id="range">全部範圍</span></p>
         <button type="button" id="fit">全覽</button>
-        <button type="button" id="locate">定位</button>
+        <button type="button" id="locate" aria-pressed="false">跟隨定位</button>
       </div>
+      <details id="trip">
+        <summary>路線與完成任務 <span id="trip-count"></span></summary>
+        <div class="trip-body">
+          <p id="trip-hint">點選地圖站點加入路線。</p>
+          <ol id="trip-stops"></ol>
+          <div id="trip-links"></div>
+          <label class="finished-toggle"><input type="checkbox" id="show-completed">顯示已完成任務 <span id="completed-count"></span></label>
+        </div>
+      </details>
       <details id="filters">
         <summary>任務與獎勵篩選</summary>
         <div class="filter-body">
@@ -290,7 +309,55 @@ const QuestFilters = (() => {
 
 </script>
   <script>
-function createQuestMap(element, locate, report, onPosition) {
+const QuestRoute = (() => {
+  function distance(from, to) {
+    const rad = Math.PI / 180;
+    const h = Math.sin((to.lat - from.lat) * rad / 2) ** 2 +
+      Math.cos(from.lat * rad) * Math.cos(to.lat * rad) *
+      Math.sin((to.lng - from.lng) * rad / 2) ** 2;
+    return 12742 * Math.asin(Math.sqrt(Math.min(1, h)));
+  }
+
+  function order(stops, position) {
+    const pending = [...stops];
+    const ordered = [];
+    let last = position || pending.shift();
+    if (!position && last) ordered.push(last);
+    while (pending.length) {
+      let nearest = 0;
+      let best = Infinity;
+      pending.forEach((stop, index) => {
+        const km = distance(last, stop);
+        if (km < best) {
+          nearest = index;
+          best = km;
+        }
+      });
+      [last] = pending.splice(nearest, 1);
+      ordered.push(last);
+    }
+    return ordered;
+  }
+
+  function directions(stops) {
+    const point = stop => stop.lat + ',' + stop.lng;
+    const links = [];
+    for (let offset = 0; offset < stops.length; offset += 4) {
+      const segment = stops.slice(offset, offset + 4);
+      const params = new URLSearchParams({
+        api: '1', travelmode: 'walking', destination: point(segment.at(-1))
+      });
+      if (offset) params.set('origin', point(stops[offset - 1]));
+      if (segment.length > 1) params.set('waypoints', segment.slice(0, -1).map(point).join('|'));
+      links.push('https://www.google.com/maps/dir/?' + params);
+    }
+    return links;
+  }
+  return { order, directions };
+})();
+</script>
+  <script>
+function createQuestMap(element, locate, report, onPosition, addActions) {
   if (!window.L?.markerClusterGroup) {
     element.textContent = '地圖套件載入失敗。連上網路後請重新開啟頁面。';
     locate.disabled = true;
@@ -310,6 +377,7 @@ function createQuestMap(element, locate, report, onPosition) {
 
   const cluster = L.markerClusterGroup({ removeOutsideVisibleBounds: true });
   cluster.addTo(map);
+  const routeLine = L.polyline([], { color: '#2355b5', weight: 4, dashArray: '7 8', interactive: false }).addTo(map);
   const icon = L.divIcon({ className: 'quest-pin', iconSize: [24, 24], iconAnchor: [12, 12] });
 
   function popup(record) {
@@ -335,41 +403,77 @@ function createQuestMap(element, locate, report, onPosition) {
     link.rel = 'noopener noreferrer';
     link.textContent = 'Google Maps 導航';
     content.append(link);
+    addActions(content, record);
     return content;
   }
 
   let position;
+  let popupOpen = false;
+  map.on('popupopen', () => { popupOpen = true; });
+  map.on('popupclose', () => { popupOpen = false; });
+  let watch = null;
+  let started = false;
+  let watchGeneration = 0;
+  let resumeFollowing = false;
+  function stopFollowing() {
+    watchGeneration++;
+    if (watch !== null) navigator.geolocation.clearWatch(watch);
+    watch = null;
+    started = false;
+    locate.textContent = '跟隨定位';
+    locate.setAttribute('aria-pressed', 'false');
+  }
   function locateUser() {
-    if (locate.disabled) return;
+    if (started) return;
     if (!navigator.geolocation) {
       report('瀏覽器無法使用定位');
       return;
     }
-    locate.disabled = true;
+    started = true;
+    const generation = ++watchGeneration;
+    locate.textContent = '停止跟隨';
+    locate.setAttribute('aria-pressed', 'true');
     report('正在定位…');
-    navigator.geolocation.getCurrentPosition(({ coords }) => {
-      locate.disabled = false;
+    let first = true;
+    watch = navigator.geolocation.watchPosition(({ coords }) => {
+      if (!started || generation !== watchGeneration) return;
       const point = [coords.latitude, coords.longitude];
-      position?.remove();
-      position = L.circleMarker(point, { radius: 8 }).addTo(map).bindTooltip('目前位置');
-      report('顯示目前位置 5 公里內的任務');
-      onPosition(coords);
+      if (position) position.setLatLng(point);
+      else position = L.circleMarker(point, { radius: 8, className: 'current-location' }).addTo(map).bindTooltip('目前位置');
+      onPosition(coords, first);
+      if (!first && !popupOpen) map.panTo(point, { animate: false });
+      first = false;
+      report('');
     }, error => {
-      locate.disabled = false;
+      if (!started || generation !== watchGeneration) return;
+      if (error.code === 1) stopFollowing();
       report(error.code === 1 ? '定位權限未開啟，請確認 Safari 設定與 HTTPS' : '目前無法取得位置');
-    }, { timeout: 12000 });
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 });
   }
-  locate.addEventListener('click', locateUser);
+  locate.addEventListener('click', () => {
+    if (started) stopFollowing();
+    else locateUser();
+  });
+  window.addEventListener('pagehide', () => {
+    resumeFollowing = started;
+    stopFollowing();
+  });
+  window.addEventListener('pageshow', event => {
+    if (event.persisted && resumeFollowing) locateUser();
+  });
 
   let renderId = 0;
+  let rendered = [];
   function render(records, fit, center) {
-    const id = ++renderId;
-    cluster.clearLayers();
     if (fit && (records.length || center)) {
       const bounds = L.latLngBounds(records.map(record => [record.lat, record.lng]));
       if (center) bounds.extend([center.latitude, center.longitude]);
       map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16, animate: false });
     }
+    if (rendered.length === records.length && rendered.every((record, index) => record === records[index])) return;
+    rendered = records;
+    const id = ++renderId;
+    cluster.clearLayers();
 
     let offset = 0;
     function addBatch() {
@@ -385,7 +489,12 @@ function createQuestMap(element, locate, report, onPosition) {
     if (records.length) requestAnimationFrame(addBatch);
   }
 
-  return { render, locateUser };
+  function showRoute(stops, origin) {
+    const points = stops.map(stop => [stop.lat, stop.lng]);
+    if (points.length && origin) points.unshift([origin.lat, origin.lng]);
+    routeLine.setLatLngs(points);
+  }
+  return { render, locateUser, stopFollowing, showRoute };
 }
 
 </script>
@@ -396,19 +505,43 @@ function createQuestMap(element, locate, report, onPosition) {
   const search = byId('search');
   const tasks = new Set();
   const rewards = new Set();
+  const selectedStops = new Map();
+  const completedToggle = byId('show-completed');
+  const completed = new Set();
+  const completionKey = 'quest-map-completed';
+  let completionDay = '';
+  let route = [];
+  let position = null;
   const report = message => { byId('map-status').textContent = message; };
-  const map = createQuestMap(byId('map'), byId('locate'), report, coords => {
+  const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
     center = coords;
-    refresh(true);
-  });
+    position = { lat: coords.latitude, lng: coords.longitude };
+    if (first) refreshTrip();
+    else map?.showRoute(route, position);
+    refresh(first);
+  }, addActions);
   let records = [];
   let matching = [];
   let filterTimer;
   let center = null;
 
+  function syncCompletionDay() {
+    const day = QuestParser.parseDate(Math.floor(Date.now() / 1000)).slice(0, 10);
+    if (completionDay === day) return;
+    completionDay = day;
+    completed.clear();
+    try {
+      const saved = JSON.parse(localStorage.getItem(completionKey));
+      if (saved?.day === day && Array.isArray(saved.keys)) saved.keys.forEach(key => completed.add(key));
+    } catch { /* Storage can be unavailable in some browsing modes. */ }
+  }
+
   function refresh(fit = false) {
+    syncCompletionDay();
     const inRange = center ? QuestFilters.nearby(matching, center, 5) : matching;
-    const visible = QuestFilters.apply(inRange, search.value, tasks, rewards);
+    const active = completedToggle.checked ? inRange : inRange.filter(record => !completed.has(record.key));
+    const visible = QuestFilters.apply(active, search.value, tasks, rewards);
+    byId('completed-count').textContent = completed.size ? '（' + completed.size + '）' : '';
     byId('count').textContent = visible.length.toLocaleString('zh-TW');
     byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
     map?.render(visible, fit, center);
@@ -416,6 +549,79 @@ function createQuestMap(element, locate, report, onPosition) {
     byId('empty').textContent = center && !inRange.length ? '附近 5 公里沒有符合的任務' :
       matching.length ? '沒有符合條件的補給站' :
       records.length ? '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
+  }
+
+  function refreshTrip() {
+    route = QuestRoute.order(selectedStops.values(), position);
+    byId('trip-count').textContent = route.length ? '（' + route.length + ' 站）' : '';
+    byId('trip-hint').textContent = route.length ? '地圖虛線顯示站點順序。' : '點選地圖站點加入路線。';
+    const list = route.map(record => {
+      const item = document.createElement('li');
+      item.textContent = record.name;
+      const done = document.createElement('button');
+      done.type = 'button';
+      done.textContent = '完成';
+      done.setAttribute('aria-label', record.name + '標記完成');
+      done.addEventListener('click', () => toggleComplete(record));
+      item.append(done);
+      return item;
+    });
+    byId('trip-stops').replaceChildren(...list);
+    const urls = QuestRoute.directions(route);
+    byId('trip-links').replaceChildren(...urls.map((url, index) => {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.className = 'directions';
+      link.textContent = urls.length === 1 ? 'Google Maps 步行導航' : '步行導航 第 ' + (index + 1) + ' 段';
+      return link;
+    }));
+    map?.showRoute(route, position);
+  }
+
+  function toggleComplete(record) {
+    syncCompletionDay();
+    if (completed.has(record.key)) {
+      completed.delete(record.key);
+    } else {
+      completed.add(record.key);
+      selectedStops.delete(record.key);
+    }
+    try {
+      localStorage.setItem(completionKey, JSON.stringify({ day: completionDay, keys: [...completed] }));
+    } catch { /* Keep completion in memory if storage is unavailable. */ }
+    refreshTrip();
+    refresh();
+  }
+
+  function addActions(popup, record) {
+    syncCompletionDay();
+    const label = document.createElement('label');
+    label.className = 'finished-toggle';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = selectedStops.has(record.key);
+    check.disabled = completed.has(record.key);
+    check.addEventListener('change', () => {
+      if (check.checked) selectedStops.set(record.key, record);
+      else selectedStops.delete(record.key);
+      refreshTrip();
+    });
+    label.append(check, document.createTextNode('加入路線'));
+    const done = document.createElement('button');
+    done.type = 'button';
+    const updateLabel = () => {
+      check.checked = selectedStops.has(record.key);
+      check.disabled = completed.has(record.key);
+      done.textContent = check.disabled ? '取消完成' : '標記完成';
+    };
+    done.addEventListener('click', () => {
+      toggleComplete(record);
+      updateLabel();
+    });
+    updateLabel();
+    popup.append(label, done);
   }
 
   function options(kind, target, selected) {
@@ -457,10 +663,13 @@ function createQuestMap(element, locate, report, onPosition) {
     refresh();
   });
   byId('fit').addEventListener('click', () => {
+    map?.stopFollowing();
     center = null;
     report('');
     refresh(true);
   });
+  completedToggle.addEventListener('change', () => refresh());
+  window.addEventListener('pageshow', () => refresh());
   byId('import').addEventListener('click', () => input.click());
 
   input.addEventListener('change', async () => {

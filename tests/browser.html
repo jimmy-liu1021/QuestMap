@@ -7,6 +7,7 @@
 <div id="summary">RUNNING</div>
 <script src="../js/parser.js"></script>
 <script src="../js/filters.js"></script>
+<script src="../js/route.js"></script>
 <script>
 const results = document.querySelector('#results');
 let passes = 0;
@@ -19,6 +20,15 @@ function check(name, result) {
   if (result) passes++;
   else failures++;
 }
+const routeStops = [5, 2, 1, 4, 3].map(lat => ({lat, lng: 120}));
+const orderedStops = QuestRoute.order(routeStops, {lat: 0, lng: 120});
+check('Multiple stops are ordered from the current position',
+  orderedStops.map(stop => stop.lat).join(',') === '1,2,3,4,5');
+const routeParams = QuestRoute.directions(orderedStops).map(link => new URL(link).searchParams);
+check('Long routes split into linked mobile navigation segments',
+  routeParams.length === 2 && routeParams[0].get('waypoints').split('|').length === 3 &&
+  routeParams[0].get('destination') === routeParams[1].get('origin') &&
+  routeParams[1].get('destination') === '5,120');
 const first = { a: 'test', b: '鳳山代天府', c: '22.627163', d: '120.372011',
   e: '16^1^8^0^^^^^Excellent', f: '4^890^^25^N^^^N', g: '1795115394' };
 const second = { ...first, a: 'another', b: '美泰宮', e: '4^5^3^0^^^^^', f: '2^^701^3^N^^^N' };
@@ -125,6 +135,22 @@ frame.onload = async () => {
         popup.textContent.includes('投出1次Excellent') &&
         popup.textContent.includes('獲得糖果25顆(無極汰那)') &&
         popup.querySelector('.directions')?.href.includes('destination=22.627163,120.372011'));
+      const routeCheckbox = popup.querySelector('input[type=checkbox]');
+      routeCheckbox.click();
+      check('Station selection adds a walking navigation stop',
+        id('trip-stops').textContent.includes('鳳山代天府') &&
+        id('trip-links').querySelector('a').href.includes('travelmode=walking'));
+      id('trip-stops').querySelector('button').click();
+      check('Finishing a station hides it and removes it from the route',
+        id('count').textContent === '0' && !id('trip-stops').children.length);
+      id('show-completed').click();
+      check('Completed stations can be shown again', id('count').textContent === '1');
+      await until(pin);
+      pin().dispatchEvent(new MouseEvent('click', { bubbles: true, view: frame.contentWindow,
+        clientX: pin().getBoundingClientRect().x + 12, clientY: pin().getBoundingClientRect().y + 12 }));
+      doc.querySelector('.leaflet-popup button').click();
+      id('show-completed').click();
+      check('Undo completion restores the station to the active map', id('count').textContent === '1');
     } else check('Marker popup and navigation', false);
     id('clear').click();
     check('Clear resets secondary filters and keeps the exact code pair',
@@ -146,22 +172,29 @@ frame.onload = async () => {
 
       const local = await fetch('../dist/local.html').catch(() => null);
       if (local?.ok) {
-        const matches = QuestFilters.matchingQuest(before);
+        const source = await local.text();
+        const snapshot = new DOMParser().parseFromString(source, 'text/html').getElementById('quest-snapshot');
+        const matches = QuestFilters.matchingQuest(QuestParser.merge([],
+          QuestParser.parse(JSON.parse(snapshot.textContent)).records).records);
         const origin = { latitude: matches[0].lat, longitude: matches[0].lng };
         const nearbyCount = QuestFilters.nearby(matches, origin, 5).length;
         const mock = '<script>Object.defineProperty(navigator, "geolocation", { value: {' +
-          'getCurrentPosition(success) { success({ coords: ' + JSON.stringify(origin) +
-          ' }); } } });</' + 'script>';
+          'watchPosition(success) { window.moveFixture = coords => success({coords});' +
+          'queueMicrotask(() => window.moveFixture(' + JSON.stringify(origin) + ')); return 0; },' +
+          'clearWatch() { window.moveFixture = null; } } });</' + 'script>';
         const nearbyFrame = document.createElement('iframe');
-        nearbyFrame.srcdoc = (await local.text()).replace('<head>', '<head>' + mock);
+        nearbyFrame.srcdoc = source.replace('<head>', '<head>' + mock);
         document.body.append(nearbyFrame);
         const nearbyDoc = name => nearbyFrame.contentDocument?.getElementById(name);
         const located = await until(() => nearbyDoc('range')?.textContent === '附近 5 公里');
         check('Embedded snapshot automatically shows nearby quests after location permission',
           located && nearbyDoc('count').textContent === nearbyCount.toLocaleString('zh-TW'));
+        nearbyFrame.contentWindow.moveFixture({ latitude: 25.03, longitude: 121.56 });
+        check('Moving GPS updates nearby stations', nearbyDoc('count').textContent === '0');
         nearbyDoc('fit')?.click();
         check('Show all removes the distance restriction',
-          nearbyDoc('count')?.textContent === matches.length.toLocaleString('zh-TW'));
+          nearbyDoc('count')?.textContent === matches.length.toLocaleString('zh-TW') &&
+          nearbyFrame.contentWindow.moveFixture === null);
       }
     }
   } catch (error) {
