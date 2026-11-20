@@ -61,6 +61,17 @@ def check_geolocation(page, location):
     )
 
 
+def geolocation_preflight(context, location):
+    page = context.new_page()
+    try:
+        url = "http://127.0.0.1/questmap-geolocation-check"
+        page.route(url, lambda route: route.fulfill(content_type="text/html", body="<!doctype html>"))
+        page.goto(url, wait_until="domcontentloaded", timeout=5000)
+        return check_geolocation(page, location)
+    finally:
+        page.close()
+
+
 def analyze(response, on_valid=None):
     output = {"http_status": response.status, "valid_rows": 0}
     if response.status != 200:
@@ -97,6 +108,11 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
         geolocation=location, permissions=["geolocation"], locale="zh-TW", timezone_id="Asia/Taipei"
     ) if location else browser.new_context()
     try:
+        if location:
+            report["stage"] = "geolocation_preflight"
+            report["geolocation_preflight"] = geolocation_preflight(context, location)
+            if report["geolocation_preflight"] != "matches_configured_position":
+                return "browser_geolocation_preflight_failed"
         page = context.new_page()
         finished = []
         blocked = []
@@ -203,8 +219,12 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
             return "quest_request_failed"
         return "quest_response_not_observed" if report["quest_requests"] else "quest_request_not_observed"
     except timeout_error:
+        if report["stage"] == "geolocation_preflight":
+            return "geolocation_preflight_timeout"
         return "navigation_timeout" if report["stage"] == "navigation" else "observation_timeout"
     except browser_error:
+        if report["stage"] == "geolocation_preflight":
+            return "geolocation_preflight_error"
         return "navigation_error" if report["stage"] == "navigation" else "observation_error"
     finally:
         context.close()
@@ -222,10 +242,12 @@ def run(options, on_valid=None):
     ):
         return {**report, "stage": "setup", "outcome": "no_graphical_display"}
     report["stage"] = "launch"
+    use_shell = sys.platform.startswith("linux") and not options.headed and getattr(options, "location", None)
+    report["browser_kind"] = "chromium_headless_shell" if use_shell else "chromium"
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
-                channel="chromium", headless=not options.headed, timeout=15000
+                channel=None if use_shell else "chromium", headless=not options.headed, timeout=15000
             )
             report["browser_version"] = browser.version
             try:
