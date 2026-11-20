@@ -245,7 +245,6 @@
       refreshData(true);
       showSnapshotTime(raw.updated_at);
       byId('import-status').textContent = '已載入任務快照';
-      map?.locateUser();
     } catch {
       byId('import-status').textContent = '任務快照無法載入，可手動匯入';
     }

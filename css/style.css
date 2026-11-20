@@ -127,6 +127,35 @@ legend { font-size: .875rem; font-weight: 650; }
 .leaflet-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .leaflet-right { padding-right: env(safe-area-inset-right); }
 .leaflet-control-zoom a { width: 44px !important; height: 44px !important; line-height: 44px !important; }
+.leaflet-location-control .map-recenter {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  color: #111;
+  background: #fff;
+  border: 0;
+  border-radius: 2px;
+}
+.leaflet-location-control .map-recenter:hover { background: #f4f4f4; }
+.map-recenter-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background:
+    linear-gradient(currentColor, currentColor) center/2px 100% no-repeat,
+    linear-gradient(currentColor, currentColor) center/100% 2px no-repeat;
+}
+.map-recenter-icon::before {
+  content: '';
+  width: 17px;
+  height: 17px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: radial-gradient(circle, currentColor 0 3px, #fff 3.5px);
+}
 .leaflet-popup-content { color: var(--ink); overflow-wrap: anywhere; }
 .leaflet-popup-content h2 { font-size: 1rem; margin: 0; }
 .leaflet-popup-content p { margin: .4rem 0; }

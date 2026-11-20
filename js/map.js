@@ -57,11 +57,13 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   let started = false;
   let watchGeneration = 0;
   let resumeFollowing = false;
+  let centerNextFix = false;
   function stopFollowing() {
     watchGeneration++;
     if (watch !== null) navigator.geolocation.clearWatch(watch);
     watch = null;
     started = false;
+    centerNextFix = false;
     locate.textContent = '跟隨定位';
     locate.setAttribute('aria-pressed', 'false');
   }
@@ -83,7 +85,12 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       if (position) position.setLatLng(point);
       else position = L.circleMarker(point, { radius: 8, className: 'current-location' }).addTo(map).bindTooltip('目前位置');
       onPosition(coords, first);
-      if (!first && !popupOpen) map.panTo(point, { animate: false });
+      if (centerNextFix) {
+        centerNextFix = false;
+        map.setView(point, Math.max(map.getZoom(), 15), { animate: false });
+      } else if (!first && !popupOpen) {
+        map.panTo(point, { animate: false });
+      }
       first = false;
       report('');
     }, error => {
@@ -96,6 +103,27 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (started) stopFollowing();
     else locateUser();
   });
+  const currentLocation = L.control({ position: 'bottomright' });
+  currentLocation.onAdd = () => {
+    const control = L.DomUtil.create('div', 'leaflet-bar leaflet-location-control');
+    const button = L.DomUtil.create('button', 'map-recenter', control);
+    button.type = 'button';
+    button.title = '回到目前位置';
+    button.setAttribute('aria-label', '回到目前位置');
+    const icon = L.DomUtil.create('span', 'map-recenter-icon', button);
+    icon.setAttribute('aria-hidden', 'true');
+    L.DomEvent.disableClickPropagation(control);
+    button.addEventListener('click', () => {
+      if (started && position) {
+        map.setView(position.getLatLng(), Math.max(map.getZoom(), 15), { animate: false });
+      } else {
+        centerNextFix = true;
+        locateUser();
+      }
+    });
+    return control;
+  };
+  currentLocation.addTo(map);
   window.addEventListener('pagehide', () => {
     resumeFollowing = started;
     stopFollowing();
@@ -171,6 +199,6 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       }).addTo(routeNumbers);
     }
   }
-  return { render, locateUser, stopFollowing, showRoute };
+  return { render, stopFollowing, showRoute };
 }
 

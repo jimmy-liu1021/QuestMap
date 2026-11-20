@@ -802,6 +802,35 @@ legend { font-size: .875rem; font-weight: 650; }
 .leaflet-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .leaflet-right { padding-right: env(safe-area-inset-right); }
 .leaflet-control-zoom a { width: 44px !important; height: 44px !important; line-height: 44px !important; }
+.leaflet-location-control .map-recenter {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  color: #111;
+  background: #fff;
+  border: 0;
+  border-radius: 2px;
+}
+.leaflet-location-control .map-recenter:hover { background: #f4f4f4; }
+.map-recenter-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background:
+    linear-gradient(currentColor, currentColor) center/2px 100% no-repeat,
+    linear-gradient(currentColor, currentColor) center/100% 2px no-repeat;
+}
+.map-recenter-icon::before {
+  content: '';
+  width: 17px;
+  height: 17px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: radial-gradient(circle, currentColor 0 3px, #fff 3.5px);
+}
 .leaflet-popup-content { color: var(--ink); overflow-wrap: anywhere; }
 .leaflet-popup-content h2 { font-size: 1rem; margin: 0; }
 .leaflet-popup-content p { margin: .4rem 0; }
@@ -1156,11 +1185,13 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   let started = false;
   let watchGeneration = 0;
   let resumeFollowing = false;
+  let centerNextFix = false;
   function stopFollowing() {
     watchGeneration++;
     if (watch !== null) navigator.geolocation.clearWatch(watch);
     watch = null;
     started = false;
+    centerNextFix = false;
     locate.textContent = '跟隨定位';
     locate.setAttribute('aria-pressed', 'false');
   }
@@ -1182,7 +1213,12 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       if (position) position.setLatLng(point);
       else position = L.circleMarker(point, { radius: 8, className: 'current-location' }).addTo(map).bindTooltip('目前位置');
       onPosition(coords, first);
-      if (!first && !popupOpen) map.panTo(point, { animate: false });
+      if (centerNextFix) {
+        centerNextFix = false;
+        map.setView(point, Math.max(map.getZoom(), 15), { animate: false });
+      } else if (!first && !popupOpen) {
+        map.panTo(point, { animate: false });
+      }
       first = false;
       report('');
     }, error => {
@@ -1195,6 +1231,27 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (started) stopFollowing();
     else locateUser();
   });
+  const currentLocation = L.control({ position: 'bottomright' });
+  currentLocation.onAdd = () => {
+    const control = L.DomUtil.create('div', 'leaflet-bar leaflet-location-control');
+    const button = L.DomUtil.create('button', 'map-recenter', control);
+    button.type = 'button';
+    button.title = '回到目前位置';
+    button.setAttribute('aria-label', '回到目前位置');
+    const icon = L.DomUtil.create('span', 'map-recenter-icon', button);
+    icon.setAttribute('aria-hidden', 'true');
+    L.DomEvent.disableClickPropagation(control);
+    button.addEventListener('click', () => {
+      if (started && position) {
+        map.setView(position.getLatLng(), Math.max(map.getZoom(), 15), { animate: false });
+      } else {
+        centerNextFix = true;
+        locateUser();
+      }
+    });
+    return control;
+  };
+  currentLocation.addTo(map);
   window.addEventListener('pagehide', () => {
     resumeFollowing = started;
     stopFollowing();
@@ -1270,7 +1327,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       }).addTo(routeNumbers);
     }
   }
-  return { render, locateUser, stopFollowing, showRoute };
+  return { render, stopFollowing, showRoute };
 }
 
 </script>
@@ -1522,7 +1579,6 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       refreshData(true);
       showSnapshotTime(raw.updated_at);
       byId('import-status').textContent = '已載入任務快照';
-      map?.locateUser();
     } catch {
       byId('import-status').textContent = '任務快照無法載入，可手動匯入';
     }

@@ -226,9 +226,24 @@ frame.onload = async () => {
         nearbyFrame.srcdoc = source.replace('<head>', '<head>' + mock);
         document.body.append(nearbyFrame);
         const nearbyDoc = name => nearbyFrame.contentDocument?.getElementById(name);
+        const ready = await until(() => nearbyDoc('count')?.textContent === matches.length.toLocaleString('zh-TW'));
+        const mapControls = nearbyFrame.contentDocument;
+        const recenter = mapControls.querySelector('.map-recenter');
+        const zoom = mapControls.querySelector('.leaflet-control-zoom');
+        check('Snapshot opens in overview without starting location tracking',
+          ready && nearbyDoc('range').textContent === '全部範圍' &&
+          nearbyFrame.contentWindow.moveFixture === undefined);
+        check('Recenter button is positioned above zoom controls',
+          recenter.getBoundingClientRect().bottom <= zoom.getBoundingClientRect().top);
+        recenter.click();
         const located = await until(() => nearbyDoc('range')?.textContent === '附近 5 公里');
-        check('Embedded snapshot automatically shows nearby quests after location permission',
+        check('Recenter starts tracking and shows nearby quests',
           located && nearbyDoc('count').textContent === nearbyCount.toLocaleString('zh-TW'));
+        const positionMarker = mapControls.querySelector('.current-location').getBoundingClientRect();
+        const mapBox = nearbyDoc('map').getBoundingClientRect();
+        check('Recenter puts the current position in the middle of the map',
+          Math.abs(positionMarker.x + positionMarker.width / 2 - (mapBox.x + mapBox.width / 2)) <= 2 &&
+          Math.abs(positionMarker.y + positionMarker.height / 2 - (mapBox.y + mapBox.height / 2)) <= 2);
         nearbyFrame.contentWindow.moveFixture({ latitude: 25.03, longitude: 121.56 });
         check('Moving GPS updates nearby stations', nearbyDoc('count').textContent === '0');
         nearbyDoc('fit')?.click();
