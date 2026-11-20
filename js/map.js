@@ -1,5 +1,5 @@
 function createQuestMap(element, locate, report, onPosition, addActions) {
-  if (!window.L?.markerClusterGroup) {
+  if (!window.L?.map) {
     element.textContent = '地圖套件載入失敗。連上網路後請重新開啟頁面。';
     locate.disabled = true;
     return null;
@@ -16,8 +16,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   }).addTo(map);
   tiles.on('tileerror', () => report('部分底圖圖磚無法載入'));
 
-  const cluster = L.markerClusterGroup({ removeOutsideVisibleBounds: true });
-  cluster.addTo(map);
+  const markerLayer = L.layerGroup().addTo(map);
   const routeLine = L.polyline([], { color: '#2355b5', weight: 4, dashArray: '7 8', interactive: false }).addTo(map);
   const routeNumbers = L.layerGroup().addTo(map);
   const icon = L.divIcon({ className: 'quest-pin', iconSize: [24, 24], iconAnchor: [12, 12] });
@@ -123,21 +122,21 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     }
     rendered = records;
     const id = ++renderId;
-    cluster.clearLayers();
+    markerLayer.clearLayers();
     markers.clear();
 
     let offset = 0;
     function addBatch() {
       if (id !== renderId) return;
-      const batch = records.slice(offset, offset + 300).map(record => {
+      const batch = records.slice(offset, offset + 300);
+      for (const record of batch) {
         const marker = L.marker([record.lat, record.lng], {
           icon: completed.has(record.key) ? doneIcon : icon,
           title: record.name
         }).bindPopup(() => popup(record));
         markers.set(record.key, marker);
-        return marker;
-      });
-      cluster.addLayers(batch);
+        marker.addTo(markerLayer);
+      }
       offset += batch.length;
       if (offset < records.length) requestAnimationFrame(addBatch);
     }

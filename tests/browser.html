@@ -137,8 +137,8 @@ frame.onload = async () => {
       id('count').textContent === '15,001' &&
       id('import-status').textContent.includes('bad.json') &&
       id('import-status').textContent.includes('重複'));
-    const leaflet = Boolean(frame.contentWindow.L?.markerClusterGroup);
-    check('Leaflet and marker clustering loaded', leaflet);
+    const leaflet = Boolean(frame.contentWindow.L?.map);
+    check('Leaflet loaded', leaflet);
     if (leaflet) {
       const tileImages = () => [...doc.querySelectorAll('#map img.leaflet-tile')];
       const loaded = await until(() => tileImages().some(tile => tile.complete && tile.naturalWidth > 0));
@@ -146,7 +146,13 @@ frame.onload = async () => {
         tileImages().every(tile => new URL(tile.src).hostname === 'wmts.nlsc.gov.tw') &&
         doc.querySelector('.leaflet-control-attribution').textContent.includes('內政部國土測繪中心'));
     }
-    if (leaflet) check('Clusters render for a large import', await until(() => doc.querySelector('.marker-cluster')));
+    if (leaflet) {
+      const allMarkers = await until(() => doc.querySelectorAll('.quest-pin').length === 15001);
+      doc.querySelector('.leaflet-control-zoom-out').click();
+      check('Every station remains a separate marker after zooming out',
+        allMarkers && doc.querySelectorAll('.quest-pin').length === 15001 &&
+        !doc.querySelector('.marker-cluster'));
+    }
     id('filters').open = true;
     check('320px expanded filters and map remain in viewport', doc.documentElement.scrollWidth <= 320 &&
       id('map').getBoundingClientRect().height > 220);
