@@ -103,6 +103,8 @@ def main():
     candidates = []
     report = run(args, on_valid=candidates.append)
     if args.area_config:
+        if "scan_failure" in report:
+            print("Scan window failure:", json.dumps(report["scan_failure"], sort_keys=True), flush=True)
         print("Playwright summary:", json.dumps(report, sort_keys=True))
     if report["outcome"] != "valid_quests" or not candidates:
         print("Update failed:", report["outcome"])

@@ -1,5 +1,6 @@
 """Observe the quest page's own requests in one fresh Chromium context."""
 import argparse
+from collections import Counter
 import json
 import os
 import sys
@@ -7,6 +8,7 @@ from time import monotonic
 from urllib.parse import parse_qs, urlsplit
 
 from diagnose_api import classify
+from convert_data import number
 from probe_api import MAX_BYTES, ProbeError, validate
 
 PAGE = "https://twpkinfo.com/iquest.aspx"
@@ -91,15 +93,32 @@ def analyze(response, on_valid=None):
         if on_valid:
             on_valid(body)
     elif summary["outcome"] == "invalid_row":
+        issues = Counter()
         for row in json.loads(body.decode("utf-8-sig"))["fp"]:
             try:
                 validate(json.dumps({"fp": [row]}).encode())
             except ProbeError:
+                if not isinstance(row, dict):
+                    issues["non_object"] += 1
+                    continue
+                for key, label, limit in (("c", "latitude", 90), ("d", "longitude", 180)):
+                    if number(row.get(key), limit) is None:
+                        issues[f"missing_{label}" if row.get(key) is None else f"invalid_{label}"] += 1
+                for key, label in (("e", "task_code"), ("f", "reward_code")):
+                    value = row.get(key)
+                    if not isinstance(value, str) or not value.strip():
+                        issues[f"missing_{label}" if value is None else f"invalid_{label}"] += 1
                 continue
             output["valid_rows"] += 1
+        output["invalid_row_fields"] = dict(issues)
         if output["valid_rows"]:
             output["outcome"] = "valid_quests_with_invalid_rows"
     return output
+
+
+def assumed_empty_scan_window(result):
+    return (result["outcome"] == "invalid_row" and result.get("fp_rows") == 1
+            and result["valid_rows"] == 0)
 
 
 def observe(browser, options, timeout_error, browser_error, report, on_valid):
@@ -184,6 +203,8 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
                         return "scan_invalid_bounds_or_request", None, None
                     bodies = []
                     result = analyze(response, bodies.append)
+                    if assumed_empty_scan_window(result):
+                        return "assumed_empty", bounds, None
                     if not bodies:
                         report["scan_failure"] = {"bounds": bounds, **result}
                         return result["outcome"], None, None
@@ -227,12 +248,14 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
                     bodies = []
                     result = analyze(quest_response, bodies.append if scan else on_valid)
                     report["responses"].append(result)
-                    if result["valid_rows"] and (not location or result["outcome"] == "valid_quests"):
+                    accepted = result["valid_rows"] and (not location or result["outcome"] == "valid_quests")
+                    assumed_empty = scan and assumed_empty_scan_window(result)
+                    if accepted or assumed_empty:
                         if scan:
                             from scan_area import sweep
 
                             report["stage"] = "scan"
-                            outcome, body = sweep(page, options, report, bodies[0], bounds,
+                            outcome, body = sweep(page, options, report, bodies[0] if bodies else None, bounds,
                                                   request_times, next_scan_response, restricted)
                             report["quest_request_intervals_seconds"] = [
                                 round(second - first, 3) for first, second in zip(request_times, request_times[1:])

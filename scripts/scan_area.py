@@ -28,9 +28,10 @@ def drag_delta(bounds, target, pixel_width, pixel_height):
 def sweep(page, options, report, initial_body, initial_bounds, request_times, next_response, restricted):
     location, radius = options.location, options.scan_radius
     rectangles = [initial_bounds]
-    first = validate(initial_body)["fp"]
+    first = validate(initial_body)["fp"] if initial_body is not None else []
     rows = list(first)
-    report["scan_windows"] = [{"bounds": initial_bounds, "valid_rows": len(first)}]
+    report["scan_windows"] = [{"bounds": initial_bounds, "valid_rows": len(first),
+                               "assumed_empty": initial_body is None}]
     report["minimum_drag_interval_seconds"] = MIN_INTERVAL_SECONDS
     report["max_quest_requests"] = MAX_QUEST_REQUESTS
     targets = plan(location, radius, initial_bounds)
@@ -71,7 +72,7 @@ def sweep(page, options, report, initial_body, initial_bounds, request_times, ne
         page.wait_for_timeout(200)
         page.mouse.up()
         outcome, bounds, body = next_response(before)
-        if outcome != "valid_quests":
+        if outcome not in {"valid_quests", "assumed_empty"}:
             return outcome, None
         handled = before + 1
         if bounds in rectangles:
@@ -80,8 +81,12 @@ def sweep(page, options, report, initial_body, initial_bounds, request_times, ne
             return "scan_zoom_changed", None
         current = bounds
         rectangles.append(bounds)
-        batch = validate(body)["fp"]
+        batch = validate(body)["fp"] if body is not None else []
         rows.extend(batch)
-        report["scan_windows"].append({"bounds": bounds, "valid_rows": len(batch)})
+        report["scan_windows"].append({"bounds": bounds, "valid_rows": len(batch),
+                                       "assumed_empty": outcome == "assumed_empty"})
     report["scan_coverage_complete"] = True
+    report["assumed_empty_windows"] = sum(window["assumed_empty"] for window in report["scan_windows"])
+    if not rows:
+        return "scan_no_valid_rows", None
     return "valid_quests", json.dumps({"fp": rows}).encode()

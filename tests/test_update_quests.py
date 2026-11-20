@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from probe_api import ProbeError
+from probe_playwright import analyze, assumed_empty_scan_window
 from plan_area_scan import circle_coverage
 from scan_area import MAX_QUEST_REQUESTS, mercator, sweep
 from update_quests import covers_circle, filter_area, read_area, update
@@ -88,18 +89,39 @@ class UpdateTests(unittest.TestCase):
             shift_x = (e - w) * dx / 1280
             bounds = (degrees(atan(sinh(mercator(n) + shift_y))), e - shift_x,
                       degrees(atan(sinh(mercator(s) + shift_y))), w - shift_x)
+            if before == 2:
+                return "assumed_empty", bounds, None
             return "valid_quests", bounds, body(record)
 
         report = {}
         with patch("scan_area.MIN_INTERVAL_SECONDS", 0):
-            outcome, data = sweep(page, options, report, body(record), start,
+            outcome, data = sweep(page, options, report, None, start,
                                   request_times, next_response, lambda: False)
         self.assertEqual(outcome, "valid_quests")
         self.assertLessEqual(len(request_times), MAX_QUEST_REQUESTS)
         actual = [item["bounds"] for item in report["scan_windows"]]
         self.assertTrue(circle_coverage(actual, location, 10))
         self.assertFalse(circle_coverage(actual[:1], location, 10))
+        self.assertEqual(report["assumed_empty_windows"], 2)
         self.assertEqual(update(self.path, filter_area(data, location, 10)), ("updated", 1))
+
+    def test_invalid_view_logs_field_counts_without_logging_body(self):
+        response = MagicMock(status=200)
+        response.header_value.return_value = None
+        response.body.return_value = body({"a": "private-value", "c": "no", "f": ""})
+        capture = MagicMock()
+        report = analyze(response, capture)
+        self.assertEqual(report["outcome"], "invalid_row")
+        self.assertEqual(report["valid_rows"], 0)
+        self.assertTrue(assumed_empty_scan_window(report))
+        self.assertFalse(assumed_empty_scan_window({**report, "fp_rows": 2}))
+        self.assertFalse(assumed_empty_scan_window({**report, "outcome": "http_429"}))
+        self.assertEqual(report["invalid_row_fields"], {
+            "invalid_latitude": 1, "missing_longitude": 1,
+            "missing_task_code": 1, "invalid_reward_code": 1,
+        })
+        self.assertNotIn("private-value", json.dumps(report))
+        capture.assert_not_called()
 
 
 if __name__ == "__main__":
