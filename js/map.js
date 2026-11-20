@@ -21,6 +21,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   const routeLine = L.polyline([], { color: '#2355b5', weight: 4, dashArray: '7 8', interactive: false }).addTo(map);
   const routeNumbers = L.layerGroup().addTo(map);
   const icon = L.divIcon({ className: 'quest-pin', iconSize: [24, 24], iconAnchor: [12, 12] });
+  const doneIcon = L.divIcon({ className: 'quest-pin quest-pin-completed', iconSize: [24, 24], iconAnchor: [12, 12] });
 
   function popup(record) {
     const content = document.createElement('section');
@@ -40,7 +41,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     }
     const link = document.createElement('a');
     link.className = 'directions';
-    link.href = 'https://www.google.com/maps/dir/?api=1&destination=' + record.lat + ',' + record.lng;
+    link.href = QuestRoute.directions([], null, record);
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     link.textContent = 'Google Maps 導航';
@@ -106,24 +107,36 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
 
   let renderId = 0;
   let rendered = [];
-  function render(records, fit, center) {
+  const markers = new Map();
+  function render(records, fit, center, completed) {
     if (fit && (records.length || center)) {
       const bounds = L.latLngBounds(records.map(record => [record.lat, record.lng]));
       if (center) bounds.extend([center.latitude, center.longitude]);
       map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16, animate: false });
     }
-    if (rendered.length === records.length && rendered.every((record, index) => record === records[index])) return;
+    if (rendered.length === records.length && rendered.every((record, index) => record === records[index])) {
+      for (const [key, marker] of markers) {
+        const newIcon = completed.has(key) ? doneIcon : icon;
+        if (marker.options.icon !== newIcon) marker.setIcon(newIcon);
+      }
+      return;
+    }
     rendered = records;
     const id = ++renderId;
     cluster.clearLayers();
+    markers.clear();
 
     let offset = 0;
     function addBatch() {
       if (id !== renderId) return;
-      const batch = records.slice(offset, offset + 300).map(record =>
-        L.marker([record.lat, record.lng], { icon, title: record.name })
-          .bindPopup(() => popup(record))
-      );
+      const batch = records.slice(offset, offset + 300).map(record => {
+        const marker = L.marker([record.lat, record.lng], {
+          icon: completed.has(record.key) ? doneIcon : icon,
+          title: record.name
+        }).bindPopup(() => popup(record));
+        markers.set(record.key, marker);
+        return marker;
+      });
       cluster.addLayers(batch);
       offset += batch.length;
       if (offset < records.length) requestAnimationFrame(addBatch);
@@ -159,6 +172,6 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       }).addTo(routeNumbers);
     }
   }
-  return { render, locateUser, stopFollowing, showRoute, closePopup: () => map.closePopup() };
+  return { render, locateUser, stopFollowing, showRoute };
 }
 

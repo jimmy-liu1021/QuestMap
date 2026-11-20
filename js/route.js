@@ -66,23 +66,18 @@ const QuestRoute = (() => {
     return ordered;
   }
 
-  function directions(stops, start, finish) {
+  function directions(stops, start, finish, maxWaypoints = 9) {
     const point = stop => stop.lat + ',' + stop.lng;
     const destinations = [...stops];
     if (finish) destinations.push(finish);
     if (start && destinations.length && point(start) === point(destinations[0])) destinations.shift();
-    const links = [];
-    for (let offset = 0; offset < destinations.length; offset += 4) {
-      const segment = destinations.slice(offset, offset + 4);
-      const params = new URLSearchParams({
-        api: '1', travelmode: 'walking', destination: point(segment.at(-1))
-      });
-      const origin = offset ? destinations[offset - 1] : start;
-      if (origin) params.set('origin', point(origin));
-      if (segment.length > 1) params.set('waypoints', segment.slice(0, -1).map(point).join('|'));
-      links.push('https://www.google.com/maps/dir/?' + params);
-    }
-    return links;
+    if (!destinations.length || destinations.length - 1 > maxWaypoints) return null;
+    const params = new URLSearchParams({
+      api: '1', travelmode: 'two-wheeler', destination: point(destinations.at(-1))
+    });
+    if (start) params.set('origin', point(start));
+    if (destinations.length > 1) params.set('waypoints', destinations.slice(0, -1).map(point).join('|'));
+    return 'https://www.google.com/maps/dir/?' + params;
   }
   return { order, directions, MAX_STOPS };
 })();

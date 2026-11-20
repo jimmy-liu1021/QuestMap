@@ -5,7 +5,6 @@
   const tasks = new Set();
   const rewards = new Set();
   const selectedStops = new Map();
-  const completedToggle = byId('show-completed');
   const completed = new Set();
   const completionKey = 'quest-map-completed';
   let completionDay = '';
@@ -13,6 +12,8 @@
   let position = null;
   let tripOrigin = null;
   let legStart = null;
+  const waypointLimit = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 3 : 9;
   const report = message => { byId('map-status').textContent = message; };
   const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
     center = coords;
@@ -38,12 +39,10 @@
   function refresh(fit = false) {
     syncCompletionDay();
     const inRange = center ? QuestFilters.nearby(matching, center, 5) : matching;
-    const active = completedToggle.checked ? inRange : inRange.filter(record => !completed.has(record.key));
-    const visible = QuestFilters.apply(active, search.value, tasks, rewards);
-    byId('completed-count').textContent = completed.size ? '（' + completed.size + '）' : '';
+    const visible = QuestFilters.apply(inRange, search.value, tasks, rewards);
     byId('count').textContent = visible.length.toLocaleString('zh-TW');
     byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
-    map?.render(visible, fit, center);
+    map?.render(visible, fit, center, completed);
     byId('empty').hidden = visible.length > 0;
     byId('empty').textContent = center && !inRange.length ? '附近 5 公里沒有符合的任務' :
       matching.length ? '沒有符合條件的補給站' :
@@ -52,33 +51,6 @@
 
   function refreshTrip() {
     route = QuestRoute.order(selectedStops.values(), legStart, tripOrigin);
-    byId('trip-count').textContent = route.length ? '（' + route.length + ' 站）' : '';
-    byId('trip-hint').textContent = route.length ? '依直線總距離最佳化，最後回到起點。' :
-      tripOrigin ? '可導航返回起點。' : '點選地圖站點加入路線，最多 ' + QuestRoute.MAX_STOPS + ' 站。';
-    byId('end-trip').hidden = !tripOrigin;
-    const list = route.map(record => {
-      const item = document.createElement('li');
-      item.textContent = record.name;
-      const done = document.createElement('button');
-      done.type = 'button';
-      done.textContent = '完成';
-      done.setAttribute('aria-label', record.name + '標記完成');
-      done.addEventListener('click', () => toggleComplete(record));
-      item.append(done);
-      return item;
-    });
-    byId('trip-stops').replaceChildren(...list);
-    const urls = QuestRoute.directions(route, legStart, tripOrigin);
-    byId('trip-links').replaceChildren(...urls.map((url, index) => {
-      const link = document.createElement('a');
-      link.href = url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.className = 'directions';
-      link.textContent = !route.length ? 'Google Maps 返回起點' :
-        urls.length === 1 ? 'Google Maps 步行導航' : '步行導航 第 ' + (index + 1) + ' 段';
-      return link;
-    }));
     map?.showRoute(route, legStart, tripOrigin);
   }
 
@@ -112,17 +84,40 @@
           report('每條路線最多 ' + QuestRoute.MAX_STOPS + ' 站');
           return;
         }
-        if (!tripOrigin) {
+        if (!selectedStops.size) {
           tripOrigin = position || { lat: record.lat, lng: record.lng };
           legStart = tripOrigin;
         }
         selectedStops.set(record.key, record);
       } else {
         selectedStops.delete(record.key);
+        if (!selectedStops.size) {
+          tripOrigin = null;
+          legStart = null;
+        }
       }
       refreshTrip();
     });
     label.append(check, document.createTextNode('加入路線'));
+    const navigate = document.createElement('button');
+    navigate.type = 'button';
+    navigate.className = 'route-navigation';
+    navigate.textContent = '路線導航';
+    const navigationStatus = document.createElement('p');
+    navigationStatus.className = 'navigation-status';
+    navigationStatus.setAttribute('role', 'status');
+    check.addEventListener('change', () => { navigationStatus.textContent = ''; });
+    navigate.addEventListener('click', () => {
+      const link = QuestRoute.directions(route, legStart, tripOrigin, waypointLimit);
+      if (link) {
+        window.open(link, '_blank', 'noopener,noreferrer');
+      } else {
+        const message = route.length ?
+          '此裝置的 Google Maps 單一路線最多支援 ' + waypointLimit + ' 個中途站，請減少勾選站點。' :
+          '請先勾選要加入路線的補給站。';
+        navigationStatus.textContent = message;
+      }
+    });
     const done = document.createElement('button');
     done.type = 'button';
     const updateLabel = () => {
@@ -135,7 +130,7 @@
       updateLabel();
     });
     updateLabel();
-    popup.append(label, done);
+    popup.append(label, navigate, done, navigationStatus);
   }
 
   function options(kind, target, selected) {
@@ -181,14 +176,6 @@
     center = null;
     report('');
     refresh(true);
-  });
-  completedToggle.addEventListener('change', () => refresh());
-  byId('end-trip').addEventListener('click', () => {
-    selectedStops.clear();
-    tripOrigin = null;
-    legStart = null;
-    map?.closePopup();
-    refreshTrip();
   });
   window.addEventListener('pageshow', () => refresh());
   byId('import').addEventListener('click', () => input.click());

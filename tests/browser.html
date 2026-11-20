@@ -24,11 +24,11 @@ const routeStops = [5, 2, 1, 4, 3].map(lat => ({lat, lng: 120}));
 const orderedStops = QuestRoute.order(routeStops, {lat: 0, lng: 120}, {lat: 6, lng: 120});
 check('Multiple stops are ordered from the current position',
   orderedStops.map(stop => stop.lat).join(',') === '1,2,3,4,5');
-const routeParams = QuestRoute.directions(orderedStops).map(link => new URL(link).searchParams);
-check('Long routes split into linked mobile navigation segments',
-  routeParams.length === 2 && routeParams[0].get('waypoints').split('|').length === 3 &&
-  routeParams[0].get('destination') === routeParams[1].get('origin') &&
-  routeParams[1].get('destination') === '5,120');
+const routeParams = new URL(QuestRoute.directions(orderedStops)).searchParams;
+check('Navigation keeps all stops in one URL or rejects excess waypoints',
+  routeParams.get('waypoints').split('|').length === 4 &&
+  routeParams.get('destination') === '5,120' &&
+  QuestRoute.directions(orderedStops, null, null, 3) === null);
 const start = {lat: 22.6, lng: 120.35};
 const cycleStops = [[2, 4], [3, -2], [-4, -1], [0, 1], [-3, 2]]
   .map(([lat, lng]) => ({lat: start.lat + lat / 1000, lng: start.lng + lng / 1000}));
@@ -51,10 +51,12 @@ const cycleRoute = QuestRoute.order(cycleStops, start);
 check('Closed route matches the global optimum found by brute force',
   Math.abs(roundTripLength(cycleRoute) -
     Math.min(...Array.from(permutations(cycleStops), roundTripLength))) < 0.000001);
-const cycleLinks = QuestRoute.directions(cycleRoute, start, start).map(link => new URL(link).searchParams);
-check('Multi-segment walking directions return to the fixed origin',
-  cycleLinks[0].get('origin') === '22.6,120.35' &&
-  cycleLinks.at(-1).get('destination') === '22.6,120.35');
+const cycleLink = new URL(QuestRoute.directions(cycleRoute, start, start)).searchParams;
+check('Single motorbike route visits every stop and returns to origin',
+  cycleLink.get('origin') === '22.6,120.35' &&
+  cycleLink.get('destination') === '22.6,120.35' &&
+  cycleLink.get('travelmode') === 'two-wheeler' &&
+  cycleLink.get('waypoints').split('|').length === cycleRoute.length);
 const first = { a: 'test', b: '鳳山代天府', c: '22.627163', d: '120.372011',
   e: '16^1^8^0^^^^^Excellent', f: '4^890^^25^N^^^N', g: '1795115394' };
 const second = { ...first, a: 'another', b: '美泰宮', e: '4^5^3^0^^^^^', f: '2^^701^3^N^^^N' };
@@ -160,27 +162,29 @@ frame.onload = async () => {
       check('Marker popup and navigation', popup?.textContent.includes('鳳山代天府') &&
         popup.textContent.includes('投出1次Excellent') &&
         popup.textContent.includes('獲得糖果25顆(無極汰那)') &&
-        popup.querySelector('.directions')?.href.includes('destination=22.627163,120.372011'));
+        new URL(popup.querySelector('.directions').href).searchParams.get('destination') === '22.627163,120.372011');
       const routeCheckbox = popup.querySelector('input[type=checkbox]');
       routeCheckbox.click();
-      check('Station selection adds a walking navigation stop',
-        id('trip-stops').textContent.includes('鳳山代天府') &&
-        id('trip-links').querySelector('a').href.includes('travelmode=walking'));
+      const opened = [];
+      frame.contentWindow.open = url => opened.push(url);
+      const navigate = popup.querySelector('.route-navigation');
+      navigate.click();
+      check('Popup checkbox is followed by a single motorcycle navigation button',
+        routeCheckbox.closest('label').nextElementSibling === navigate &&
+        !id('trip') && opened.length === 1 &&
+        new URL(opened[0]).searchParams.get('travelmode') === 'two-wheeler');
       check('Selected station is numbered on the map',
         doc.querySelector('.route-stop-number')?.textContent === '1' &&
         doc.querySelector('.route-start-label')?.textContent === '起點');
-      id('trip-stops').querySelector('button').click();
-      check('Finishing a station hides it and removes it from the route',
-        id('count').textContent === '0' && !id('trip-stops').children.length &&
-        !doc.querySelector('.route-stop-number'));
-      id('show-completed').click();
-      check('Completed stations can be shown again', id('count').textContent === '1');
-      await until(pin);
-      pin().dispatchEvent(new MouseEvent('click', { bubbles: true, view: frame.contentWindow,
-        clientX: pin().getBoundingClientRect().x + 12, clientY: pin().getBoundingClientRect().y + 12 }));
-      doc.querySelector('.leaflet-popup button').click();
-      id('show-completed').click();
-      check('Undo completion restores the station to the active map', id('count').textContent === '1');
+      navigate.nextElementSibling.click();
+      const grey = await until(() => pin()?.classList.contains('quest-pin-completed'));
+      check('Completing a station keeps it visible and turns it gray',
+        grey && id('count').textContent === '1' && !doc.querySelector('.route-stop-number'));
+      const undo = popup.querySelector('.route-navigation').nextElementSibling;
+      check('Completed station can be undone within the popup', undo.textContent === '取消完成');
+      undo.click();
+      check('Undo completion restores the station color',
+        await until(() => pin() && !pin().classList.contains('quest-pin-completed')));
     } else check('Marker popup and navigation', false);
     id('clear').click();
     check('Clear resets secondary filters and keeps the exact code pair',
