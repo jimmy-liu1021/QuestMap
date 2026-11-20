@@ -4,21 +4,21 @@
 
 ## Windows
 
-開啟 `dist/local.html` 會直接載入本機打包的任務快照，以全覽顯示所有符合項目。按地圖右下角縮放按鈕上方的「回到目前位置」，允許定位後會把地圖移到目前位置並顯示附近 5 公里內的任務。若瀏覽器限制本機檔案定位，可執行下方的本機 HTTP 預覽並開啟 `http://localhost:8000/dist/local.html`。
+開啟 `dist/local.html` 會直接載入本機打包的任務快照，並自動觸發「回到目前位置」。允許定位後，地圖會跟隨目前位置，全部站點始終保留。若瀏覽器限制本機檔案定位，可執行下方的本機 HTTP 預覽並開啟 `http://localhost:8000/dist/local.html`。
 
 有新的 `quests.json` 時執行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -LocalSnapshot` 重建本機版。快照反映檔案中的資料及更新時間，專案不會向來源網站抓取即時任務。包含快照的 `dist/local.html` 已列入 Git 忽略清單，請留在本機。
 
 1. 用 Chrome 或 Edge 雙擊開啟 [dist/index.html](dist/index.html)。單檔已內嵌專案的 CSS 和 JavaScript，可直接用 `file://` 開啟。
 2. 按「匯入 JSON」選取一個或多個 `quests.json` 檔案。也可先使用 [範例資料](data/quests.sample.json)。
-3. 點選標記查看任務。縮小地圖時各站仍各自顯示。同一位置的標記可能重疊。「全覽」會縮放到快照中符合指定任務和獎勵的範圍。
+3. 點選標記查看任務。縮小地圖時各站仍各自顯示。同一位置的標記可能重疊。
 
 單檔內嵌 Leaflet 和樣式，底圖圖磚仍需連網。手動匯入的資料只在目前頁面記憶體中，重新開啟頁面後需重新匯入。
 
 ## iPhone Safari
 
-- 按「跟隨定位」並允許 Safari 使用位置。地圖開著時會隨位置更新附近 5 公里的任務。「停止跟隨」會停在上次位置，「全覽」會顯示整份快照。
+- 按「跟隨定位」並允許 Safari 使用位置。地圖開著時會隨位置移動。「停止跟隨」會保留當前視角。
 - 在站點彈窗勾選「加入路線」，再展開地圖左下角的「已選站點」。清單依地圖編號排列，點站名即可開啟該站的 Google Maps 機車導航，最後可點「返回起點」。第一次勾選時固定起點，有定位時用當下的位置，否則用第一站。地圖最多計算 16 站的最短直線往返順序。[Google Maps URL 說明](https://developers.google.com/maps/documentation/urls/get-started#directions-action)
-- 在清單勾選「完成」或在地圖彈窗按「標記完成」，兩處會同步。站點變灰並移出待訪路線，仍留在清單內，可以取消完成。完成紀錄保存在目前瀏覽器，按台灣日期重新計算。
+- 在清單勾選「完成」或在地圖彈窗按「標記完成」，兩處會同步。站點與編號變灰，清單保留原順序，站名加上刪除線並停用導航。取消完成會恢復連結。完成紀錄保存在目前瀏覽器，按台灣日期重新計算。
 
 1. 將 JSON 存到 iCloud Drive 或「我的 iPhone」的「檔案」App。
 2. 用 Safari 開啟 GitHub Pages 的 HTTPS 網址。
@@ -30,7 +30,7 @@
 1. 在 GitHub 建立公開儲存庫。使用 GitHub Free 時，公開儲存庫可使用 Pages。
 2. 將 `dist/index.html` 的內容以 `index.html` 檔名上傳到儲存庫根目錄，提交到 `main`。如需一起上傳開發原始碼，可將上面的單檔放在儲存庫的 `docs/index.html`，再選擇 `/docs` 發布。
 3. 在 **Settings → Pages → Build and deployment** 下選擇 **Deploy from a branch**，選 `main` 與 `/ (root)` 或對應的 `/docs`，儲存並等待 Pages 顯示網址。以 HTTPS 網址開啟。部署後家中的電腦可以關機。[GitHub Pages 發布來源說明](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages?s=09)
-4. 預設由訪客手動選檔。若有允許公開再散布的資料，可把 `quests.json` 放在發布版的 `index.html` 同一層，頁面會自動讀取並顯示全覽。Pages 上的檔案可由訪客下載。現有的原始擷取檔、請求標頭和憑證請留在本機。
+4. 預設由訪客手動選檔。若有允許公開再散布的資料，可把 `quests.json` 放在發布版的 `index.html` 同一層，頁面會自動讀取。開頁時會嘗試定位，並保留所有站點。Pages 上的檔案可由訪客下載。現有的原始擷取檔、請求標頭和憑證請留在本機。
 
 單檔版及 GitHub Pages 版均使用國土測繪中心免申請的「臺灣通用電子地圖」WMTS，底圖主要涵蓋台灣，無須 API Key。原版的 OpenStreetMap 公益圖磚端點可能對缺少網站 Referer 的本機檔案回傳 403。[國土測繪中心 WMTS 說明](https://maps.nlsc.gov.tw/S09SOA/pro/Wmts_ajax_main.jsp) · [OpenStreetMap 圖磚政策](https://operations.osmfoundation.org/policies/tiles/)
 

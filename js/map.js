@@ -7,7 +7,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
 
   const map = L.map(element, { zoomControl: false }).setView([23.7, 120.95], 7);
   if (window.ResizeObserver) {
-    new ResizeObserver(() => map.invalidateSize({ pan: false })).observe(element);
+    new ResizeObserver(() => map.invalidateSize({ debounceMoveend: true })).observe(element);
   }
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   const tiles = L.tileLayer('https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}', {
@@ -78,20 +78,18 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     locate.textContent = '停止跟隨';
     locate.setAttribute('aria-pressed', 'true');
     report('正在定位…');
-    let first = true;
     watch = navigator.geolocation.watchPosition(({ coords }) => {
       if (!started || generation !== watchGeneration) return;
       const point = [coords.latitude, coords.longitude];
       if (position) position.setLatLng(point);
       else position = L.circleMarker(point, { radius: 8, className: 'current-location' }).addTo(map).bindTooltip('目前位置');
-      onPosition(coords, first);
+      onPosition(coords);
       if (centerNextFix) {
         centerNextFix = false;
         map.setView(point, Math.max(map.getZoom(), 15), { animate: false });
-      } else if (!first && !popupOpen) {
+      } else if (!popupOpen) {
         map.panTo(point, { animate: false });
       }
-      first = false;
       report('');
     }, error => {
       if (!started || generation !== watchGeneration) return;
@@ -103,6 +101,14 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (started) stopFollowing();
     else locateUser();
   });
+  function recenter() {
+    if (started && position) {
+      map.setView(position.getLatLng(), Math.max(map.getZoom(), 15), { animate: false });
+    } else {
+      centerNextFix = true;
+      locateUser();
+    }
+  }
   const currentLocation = L.control({ position: 'bottomright' });
   currentLocation.onAdd = () => {
     const control = L.DomUtil.create('div', 'leaflet-bar leaflet-location-control');
@@ -113,14 +119,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     const icon = L.DomUtil.create('span', 'map-recenter-icon', button);
     icon.setAttribute('aria-hidden', 'true');
     L.DomEvent.disableClickPropagation(control);
-    button.addEventListener('click', () => {
-      if (started && position) {
-        map.setView(position.getLatLng(), Math.max(map.getZoom(), 15), { animate: false });
-      } else {
-        centerNextFix = true;
-        locateUser();
-      }
-    });
+    button.addEventListener('click', recenter);
     return control;
   };
   currentLocation.addTo(map);
@@ -135,10 +134,9 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   let renderId = 0;
   let rendered = [];
   const markers = new Map();
-  function render(records, fit, center, completed) {
-    if (fit && (records.length || center)) {
+  function render(records, fit, completed) {
+    if (fit && records.length) {
       const bounds = L.latLngBounds(records.map(record => [record.lat, record.lng]));
-      if (center) bounds.extend([center.latitude, center.longitude]);
       map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16, animate: false });
     }
     if (rendered.length === records.length && rendered.every((record, index) => record === records[index])) {
@@ -171,34 +169,33 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (records.length) requestAnimationFrame(addBatch);
   }
 
-  let numberedStops;
-  let routeOrigin;
-  function showRoute(stops, origin, finish) {
+  function showRoute(stops, origin, completed) {
     const points = stops.map(stop => [stop.lat, stop.lng]);
-    if (origin) points.unshift([origin.lat, origin.lng]);
-    if (finish) points.push([finish.lat, finish.lng]);
+    if (origin) {
+      const start = [origin.lat, origin.lng];
+      points.unshift(start);
+      points.push(start);
+    }
     routeLine.setLatLngs(points);
-    if (numberedStops === stops && routeOrigin === finish) return;
-    numberedStops = stops;
-    routeOrigin = finish;
     routeNumbers.clearLayers();
     stops.forEach((stop, index) => {
       const label = L.divIcon({
-        className: 'route-stop-number', html: String(index + 1),
+        className: completed.has(stop.key) ? 'route-stop-number route-stop-completed' : 'route-stop-number',
+        html: String(index + 1),
         iconSize: [26, 26], iconAnchor: [4, 32]
       });
       L.marker([stop.lat, stop.lng], {
         icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
       }).addTo(routeNumbers);
     });
-    if (finish) {
+    if (origin) {
       const label = L.divIcon({ className: 'route-start-label', html: '起點',
         iconSize: [35, 25], iconAnchor: [40, 32] });
-      L.marker([finish.lat, finish.lng], {
+      L.marker([origin.lat, origin.lng], {
         icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
       }).addTo(routeNumbers);
     }
   }
-  return { render, stopFollowing, showRoute };
+  return { render, recenter, showRoute };
 }
 

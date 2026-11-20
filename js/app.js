@@ -10,17 +10,14 @@
   let completionDay = '';
   let position = null;
   let tripOrigin = null;
-  let legStart = null;
+  let route = [];
   let syncPopup = null;
   const report = message => { byId('map-status').textContent = message; };
-  const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
-    center = coords;
+  const map = createQuestMap(byId('map'), byId('locate'), report, coords => {
     position = { lat: coords.latitude, lng: coords.longitude };
-    refresh(first);
   }, addActions);
   let records = [];
   let matching = [];
-  let center = null;
 
   function syncCompletionDay() {
     const day = QuestParser.parseDate(Math.floor(Date.now() / 1000)).slice(0, 10);
@@ -36,42 +33,40 @@
 
   function refresh(fit = false) {
     if (syncCompletionDay()) refreshTrip();
-    const visible = center ? QuestFilters.nearby(matching, center, 5) : matching;
-    byId('count').textContent = visible.length.toLocaleString('zh-TW');
-    byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
-    map?.render(visible, fit, center, completed);
-    byId('empty').hidden = visible.length > 0;
-    byId('empty').textContent = center ? '附近 5 公里沒有符合的任務' :
-      records.length ? '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
+    byId('count').textContent = matching.length.toLocaleString('zh-TW');
+    map?.render(matching, fit, completed);
+    byId('empty').hidden = matching.length > 0;
+    byId('empty').textContent = records.length ?
+      '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
   }
 
   function refreshTrip(focusKey) {
-    const stops = [...selectedStops.values()];
-    const pending = stops.filter(stop => !completed.has(stop.key));
-    const finished = stops.filter(stop => completed.has(stop.key));
-    const route = QuestRoute.order(pending, legStart, tripOrigin);
-    byId('selected-station-count').textContent = stops.length.toLocaleString('zh-TW');
+    byId('selected-station-count').textContent = route.length.toLocaleString('zh-TW');
     let focused;
-    const items = [...route, ...finished].map(stop => {
+    const items = route.map(stop => {
+      const isComplete = completed.has(stop.key);
       const item = document.createElement('li');
-      item.classList.toggle('selected-station-completed', completed.has(stop.key));
+      item.classList.toggle('selected-station-completed', isComplete);
       const row = document.createElement('div');
       row.className = 'selected-station-row';
-      const link = document.createElement('a');
-      link.href = QuestRoute.navigationUrl(stop);
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = stop.name;
+      const name = document.createElement(isComplete ? 'span' : 'a');
+      name.className = 'selected-station-name';
+      name.textContent = stop.name;
+      if (!isComplete) {
+        name.href = QuestRoute.navigationUrl(stop);
+        name.target = '_blank';
+        name.rel = 'noopener noreferrer';
+      }
       const label = document.createElement('label');
       label.className = 'station-completion';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.checked = completed.has(stop.key);
+      checkbox.checked = isComplete;
       checkbox.setAttribute('aria-label', stop.name + '已完成');
       checkbox.addEventListener('change', () => toggleComplete(stop, true));
       if (stop.key === focusKey) focused = checkbox;
       label.append(checkbox, document.createTextNode('完成'));
-      row.append(link, label);
+      row.append(name, label);
       item.append(row);
       return item;
     });
@@ -83,7 +78,7 @@
     if (stationPanel.hidden) stationPanel.open = false;
     focused?.focus({ preventScroll: true });
     syncPopup?.();
-    map?.showRoute(route, legStart, tripOrigin);
+    map?.showRoute(route, tripOrigin, completed);
   }
 
   function toggleComplete(record, fromList = false) {
@@ -92,7 +87,6 @@
       completed.delete(record.key);
     } else {
       completed.add(record.key);
-      if (selectedStops.has(record.key)) legStart = { lat: record.lat, lng: record.lng };
     }
     try {
       localStorage.setItem(completionKey, JSON.stringify({ day: completionDay, keys: [...completed] }));
@@ -116,16 +110,15 @@
         }
         if (!selectedStops.size) {
           tripOrigin = position || { lat: record.lat, lng: record.lng };
-          legStart = tripOrigin;
         }
         selectedStops.set(record.key, record);
       } else {
         selectedStops.delete(record.key);
         if (!selectedStops.size) {
           tripOrigin = null;
-          legStart = null;
         }
       }
+      route = QuestRoute.order(selectedStops.values(), tripOrigin);
       refreshTrip();
     });
     label.append(check, document.createTextNode('加入路線'));
@@ -149,12 +142,6 @@
     refresh(fit);
   }
 
-  byId('fit').addEventListener('click', () => {
-    map?.stopFollowing();
-    center = null;
-    report('');
-    refresh(true);
-  });
   window.addEventListener('pageshow', () => refresh());
   byId('import').addEventListener('click', () => input.click());
 
@@ -180,7 +167,7 @@
         failures.push(file.name + '（' + error.message + '）');
       }
     }
-    refreshData(successes > 0);
+    refreshData(successes > 0 && !position);
     const message = ['匯入 ' + successes + '/' + files.length + ' 個檔案'];
     if (invalid) message.push('略過 ' + invalid + ' 筆無效座標');
     if (duplicates) message.push('合併 ' + duplicates + ' 筆重複資料');
@@ -220,13 +207,14 @@
       const parsed = QuestParser.parse(raw);
       const bundled = QuestParser.merge([], parsed.records).records;
       records = QuestParser.merge(bundled, records).records;
-      refreshData(true);
+      refreshData(!position);
       showSnapshotTime(raw.updated_at);
       byId('import-status').textContent = '已載入任務快照';
     } catch {
       byId('import-status').textContent = '任務快照無法載入，可手動匯入';
     }
   }
+  map?.recenter();
   loadSnapshot();
 })();
 

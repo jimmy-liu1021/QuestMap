@@ -748,7 +748,7 @@ output { font-size: 1.25rem; font-weight: 750; }
 .selected-stations ol { margin: 0; padding-left: 2.05rem; max-height: min(13rem, 34dvh); overflow-y: auto; }
 .selected-stations li { padding-right: .5rem; }
 .selected-station-row { display: flex; align-items: center; gap: .25rem; }
-.selected-station-row a { flex: 1; min-width: 0; }
+.selected-station-name { flex: 1; min-width: 0; }
 .station-completion {
   display: inline-flex;
   flex: none;
@@ -759,9 +759,9 @@ output { font-size: 1.25rem; font-weight: 750; }
   cursor: pointer;
 }
 .station-completion input { width: 1.05rem; height: 1.05rem; accent-color: #206b49; }
-.selected-station-completed::marker { content: ''; }
-.selected-station-completed a { color: #666; }
-.selected-stations a {
+.selected-station-completed .selected-station-name { color: #666; text-decoration: line-through; }
+.selected-station-completed::marker { color: #666; }
+.selected-stations a, .selected-station-name {
   display: flex;
   align-items: center;
   min-height: 44px;
@@ -802,6 +802,7 @@ output { font-size: 1.25rem; font-weight: 750; }
   font: 700 12px/1 system-ui, sans-serif;
   pointer-events: none;
 }
+.route-stop-completed { background: #767b81; }
 .route-start-label {
   display: grid;
   place-items: center;
@@ -872,8 +873,7 @@ output { font-size: 1.25rem; font-weight: 750; }
   <main>
     <section class="toolbar" aria-label="任務控制">
       <div class="toolbar-row">
-        <p class="total"><output id="count" aria-live="polite">0</output> 個補給站<br><span id="range">全部範圍</span></p>
-        <button type="button" id="fit">全覽</button>
+        <p class="total"><output id="count" aria-live="polite">0</output> 個補給站</p>
         <button type="button" id="locate" aria-pressed="false">跟隨定位</button>
       </div>
       <p class="status" id="import-status" role="status"></p>
@@ -1012,17 +1012,7 @@ const QuestFilters = (() => {
     );
   }
 
-  function nearby(records, { latitude, longitude }, radiusKm) {
-    const radians = Math.PI / 180;
-    const limit = Math.sin(radiusKm / (2 * 6371)) ** 2;
-    return records.filter(({ lat, lng }) =>
-      Math.sin((lat - latitude) * radians / 2) ** 2 +
-      Math.cos(latitude * radians) * Math.cos(lat * radians) *
-      Math.sin((lng - longitude) * radians / 2) ** 2 <= limit
-    );
-  }
-
-  return { matchingQuest, nearby };
+  return { matchingQuest };
 })();
 
 </script>
@@ -1117,7 +1107,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
 
   const map = L.map(element, { zoomControl: false }).setView([23.7, 120.95], 7);
   if (window.ResizeObserver) {
-    new ResizeObserver(() => map.invalidateSize({ pan: false })).observe(element);
+    new ResizeObserver(() => map.invalidateSize({ debounceMoveend: true })).observe(element);
   }
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   const tiles = L.tileLayer('https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}', {
@@ -1188,20 +1178,18 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     locate.textContent = '停止跟隨';
     locate.setAttribute('aria-pressed', 'true');
     report('正在定位…');
-    let first = true;
     watch = navigator.geolocation.watchPosition(({ coords }) => {
       if (!started || generation !== watchGeneration) return;
       const point = [coords.latitude, coords.longitude];
       if (position) position.setLatLng(point);
       else position = L.circleMarker(point, { radius: 8, className: 'current-location' }).addTo(map).bindTooltip('目前位置');
-      onPosition(coords, first);
+      onPosition(coords);
       if (centerNextFix) {
         centerNextFix = false;
         map.setView(point, Math.max(map.getZoom(), 15), { animate: false });
-      } else if (!first && !popupOpen) {
+      } else if (!popupOpen) {
         map.panTo(point, { animate: false });
       }
-      first = false;
       report('');
     }, error => {
       if (!started || generation !== watchGeneration) return;
@@ -1213,6 +1201,14 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (started) stopFollowing();
     else locateUser();
   });
+  function recenter() {
+    if (started && position) {
+      map.setView(position.getLatLng(), Math.max(map.getZoom(), 15), { animate: false });
+    } else {
+      centerNextFix = true;
+      locateUser();
+    }
+  }
   const currentLocation = L.control({ position: 'bottomright' });
   currentLocation.onAdd = () => {
     const control = L.DomUtil.create('div', 'leaflet-bar leaflet-location-control');
@@ -1223,14 +1219,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     const icon = L.DomUtil.create('span', 'map-recenter-icon', button);
     icon.setAttribute('aria-hidden', 'true');
     L.DomEvent.disableClickPropagation(control);
-    button.addEventListener('click', () => {
-      if (started && position) {
-        map.setView(position.getLatLng(), Math.max(map.getZoom(), 15), { animate: false });
-      } else {
-        centerNextFix = true;
-        locateUser();
-      }
-    });
+    button.addEventListener('click', recenter);
     return control;
   };
   currentLocation.addTo(map);
@@ -1245,10 +1234,9 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   let renderId = 0;
   let rendered = [];
   const markers = new Map();
-  function render(records, fit, center, completed) {
-    if (fit && (records.length || center)) {
+  function render(records, fit, completed) {
+    if (fit && records.length) {
       const bounds = L.latLngBounds(records.map(record => [record.lat, record.lng]));
-      if (center) bounds.extend([center.latitude, center.longitude]);
       map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16, animate: false });
     }
     if (rendered.length === records.length && rendered.every((record, index) => record === records[index])) {
@@ -1281,35 +1269,34 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (records.length) requestAnimationFrame(addBatch);
   }
 
-  let numberedStops;
-  let routeOrigin;
-  function showRoute(stops, origin, finish) {
+  function showRoute(stops, origin, completed) {
     const points = stops.map(stop => [stop.lat, stop.lng]);
-    if (origin) points.unshift([origin.lat, origin.lng]);
-    if (finish) points.push([finish.lat, finish.lng]);
+    if (origin) {
+      const start = [origin.lat, origin.lng];
+      points.unshift(start);
+      points.push(start);
+    }
     routeLine.setLatLngs(points);
-    if (numberedStops === stops && routeOrigin === finish) return;
-    numberedStops = stops;
-    routeOrigin = finish;
     routeNumbers.clearLayers();
     stops.forEach((stop, index) => {
       const label = L.divIcon({
-        className: 'route-stop-number', html: String(index + 1),
+        className: completed.has(stop.key) ? 'route-stop-number route-stop-completed' : 'route-stop-number',
+        html: String(index + 1),
         iconSize: [26, 26], iconAnchor: [4, 32]
       });
       L.marker([stop.lat, stop.lng], {
         icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
       }).addTo(routeNumbers);
     });
-    if (finish) {
+    if (origin) {
       const label = L.divIcon({ className: 'route-start-label', html: '起點',
         iconSize: [35, 25], iconAnchor: [40, 32] });
-      L.marker([finish.lat, finish.lng], {
+      L.marker([origin.lat, origin.lng], {
         icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
       }).addTo(routeNumbers);
     }
   }
-  return { render, stopFollowing, showRoute };
+  return { render, recenter, showRoute };
 }
 
 </script>
@@ -1326,17 +1313,14 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   let completionDay = '';
   let position = null;
   let tripOrigin = null;
-  let legStart = null;
+  let route = [];
   let syncPopup = null;
   const report = message => { byId('map-status').textContent = message; };
-  const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
-    center = coords;
+  const map = createQuestMap(byId('map'), byId('locate'), report, coords => {
     position = { lat: coords.latitude, lng: coords.longitude };
-    refresh(first);
   }, addActions);
   let records = [];
   let matching = [];
-  let center = null;
 
   function syncCompletionDay() {
     const day = QuestParser.parseDate(Math.floor(Date.now() / 1000)).slice(0, 10);
@@ -1352,42 +1336,40 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
 
   function refresh(fit = false) {
     if (syncCompletionDay()) refreshTrip();
-    const visible = center ? QuestFilters.nearby(matching, center, 5) : matching;
-    byId('count').textContent = visible.length.toLocaleString('zh-TW');
-    byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
-    map?.render(visible, fit, center, completed);
-    byId('empty').hidden = visible.length > 0;
-    byId('empty').textContent = center ? '附近 5 公里沒有符合的任務' :
-      records.length ? '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
+    byId('count').textContent = matching.length.toLocaleString('zh-TW');
+    map?.render(matching, fit, completed);
+    byId('empty').hidden = matching.length > 0;
+    byId('empty').textContent = records.length ?
+      '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
   }
 
   function refreshTrip(focusKey) {
-    const stops = [...selectedStops.values()];
-    const pending = stops.filter(stop => !completed.has(stop.key));
-    const finished = stops.filter(stop => completed.has(stop.key));
-    const route = QuestRoute.order(pending, legStart, tripOrigin);
-    byId('selected-station-count').textContent = stops.length.toLocaleString('zh-TW');
+    byId('selected-station-count').textContent = route.length.toLocaleString('zh-TW');
     let focused;
-    const items = [...route, ...finished].map(stop => {
+    const items = route.map(stop => {
+      const isComplete = completed.has(stop.key);
       const item = document.createElement('li');
-      item.classList.toggle('selected-station-completed', completed.has(stop.key));
+      item.classList.toggle('selected-station-completed', isComplete);
       const row = document.createElement('div');
       row.className = 'selected-station-row';
-      const link = document.createElement('a');
-      link.href = QuestRoute.navigationUrl(stop);
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = stop.name;
+      const name = document.createElement(isComplete ? 'span' : 'a');
+      name.className = 'selected-station-name';
+      name.textContent = stop.name;
+      if (!isComplete) {
+        name.href = QuestRoute.navigationUrl(stop);
+        name.target = '_blank';
+        name.rel = 'noopener noreferrer';
+      }
       const label = document.createElement('label');
       label.className = 'station-completion';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.checked = completed.has(stop.key);
+      checkbox.checked = isComplete;
       checkbox.setAttribute('aria-label', stop.name + '已完成');
       checkbox.addEventListener('change', () => toggleComplete(stop, true));
       if (stop.key === focusKey) focused = checkbox;
       label.append(checkbox, document.createTextNode('完成'));
-      row.append(link, label);
+      row.append(name, label);
       item.append(row);
       return item;
     });
@@ -1399,7 +1381,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (stationPanel.hidden) stationPanel.open = false;
     focused?.focus({ preventScroll: true });
     syncPopup?.();
-    map?.showRoute(route, legStart, tripOrigin);
+    map?.showRoute(route, tripOrigin, completed);
   }
 
   function toggleComplete(record, fromList = false) {
@@ -1408,7 +1390,6 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       completed.delete(record.key);
     } else {
       completed.add(record.key);
-      if (selectedStops.has(record.key)) legStart = { lat: record.lat, lng: record.lng };
     }
     try {
       localStorage.setItem(completionKey, JSON.stringify({ day: completionDay, keys: [...completed] }));
@@ -1432,16 +1413,15 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
         }
         if (!selectedStops.size) {
           tripOrigin = position || { lat: record.lat, lng: record.lng };
-          legStart = tripOrigin;
         }
         selectedStops.set(record.key, record);
       } else {
         selectedStops.delete(record.key);
         if (!selectedStops.size) {
           tripOrigin = null;
-          legStart = null;
         }
       }
+      route = QuestRoute.order(selectedStops.values(), tripOrigin);
       refreshTrip();
     });
     label.append(check, document.createTextNode('加入路線'));
@@ -1465,12 +1445,6 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     refresh(fit);
   }
 
-  byId('fit').addEventListener('click', () => {
-    map?.stopFollowing();
-    center = null;
-    report('');
-    refresh(true);
-  });
   window.addEventListener('pageshow', () => refresh());
   byId('import').addEventListener('click', () => input.click());
 
@@ -1496,7 +1470,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
         failures.push(file.name + '（' + error.message + '）');
       }
     }
-    refreshData(successes > 0);
+    refreshData(successes > 0 && !position);
     const message = ['匯入 ' + successes + '/' + files.length + ' 個檔案'];
     if (invalid) message.push('略過 ' + invalid + ' 筆無效座標');
     if (duplicates) message.push('合併 ' + duplicates + ' 筆重複資料');
@@ -1536,13 +1510,14 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       const parsed = QuestParser.parse(raw);
       const bundled = QuestParser.merge([], parsed.records).records;
       records = QuestParser.merge(bundled, records).records;
-      refreshData(true);
+      refreshData(!position);
       showSnapshotTime(raw.updated_at);
       byId('import-status').textContent = '已載入任務快照';
     } catch {
       byId('import-status').textContent = '任務快照無法載入，可手動匯入';
     }
   }
+  map?.recenter();
   loadSnapshot();
 })();
 

@@ -145,12 +145,15 @@ frame.onload = async () => {
     check('320px toolbar has no filters and leaves room for the map',
       !id('filters') && !id('search') && doc.documentElement.scrollWidth <= 320 &&
       id('map').getBoundingClientRect().height > 220);
-    id('fit').click();
     const pin = () => doc.querySelector('.quest-pin[title="鳳山代天府"]');
     if (leaflet && await until(pin)) {
-      pin().dispatchEvent(new MouseEvent('click', { bubbles: true, view: frame.contentWindow,
-        clientX: pin().getBoundingClientRect().x + 12, clientY: pin().getBoundingClientRect().y + 12 }));
-      const popup = doc.querySelector('.leaflet-popup');
+      const openPin = marker => {
+        const rect = marker.getBoundingClientRect();
+        marker.dispatchEvent(new MouseEvent('click', { bubbles: true, view: frame.contentWindow,
+          clientX: rect.x + 12, clientY: rect.y + 12 }));
+        return [...doc.querySelectorAll('.leaflet-popup')].at(-1);
+      };
+      let popup = openPin(pin());
       check('Marker popup and navigation', popup?.textContent.includes('鳳山代天府') &&
         popup.textContent.includes('投出1次Excellent') &&
         popup.textContent.includes('獲得糖果25顆(無極汰那)') &&
@@ -173,12 +176,24 @@ frame.onload = async () => {
       check('Selected station is numbered on the map',
         doc.querySelector('.route-stop-number')?.textContent === '1' &&
         doc.querySelector('.route-start-label')?.textContent === '起點');
+      const secondPin = doc.querySelector('.quest-pin[title="批次 14999"]');
+      openPin(secondPin).querySelector('input[type=checkbox]').click();
+      popup = openPin(pin());
+      const names = () => [...id('selected-station-list').querySelectorAll('.selected-station-name')];
+      const order = () => names().map(name => name.textContent).join('|');
+      const originalOrder = order();
+      const originalIndex = names().findIndex(name => name.textContent === '鳳山代天府');
       popup.querySelector('.mark-complete').click();
       const grey = await until(() => pin()?.classList.contains('quest-pin-completed'));
-      const completion = () => id('selected-station-list').querySelector('input[type=checkbox]');
+      const completion = () => id('selected-station-list').querySelector('input[aria-label="鳳山代天府已完成"]');
       check('Completing a station keeps it visible and turns it gray',
-        grey && id('count').textContent === '15,001' && !doc.querySelector('.route-stop-number') &&
+        grey && id('count').textContent === '15,001' &&
         completion().checked);
+      check('Completing a station preserves order and replaces its link with struck-through text',
+        order() === originalOrder && names().length === 2 &&
+        names()[originalIndex].tagName === 'SPAN' &&
+        frame.contentWindow.getComputedStyle(names()[originalIndex]).textDecorationLine.includes('line-through') &&
+        doc.querySelector('.route-stop-completed').textContent === String(originalIndex + 1));
       const returning = new URL(id('return-to-start').href).searchParams;
       check('Returning to the original start remains available after finishing',
         returning.get('destination') === '22.627163,120.372011' && returning.get('dir_action') === 'navigate');
@@ -188,11 +203,13 @@ frame.onload = async () => {
       completion().click();
       check('Unchecking the list completion restores the marker and popup action',
         !completion().checked && !pin().classList.contains('quest-pin-completed') &&
-        undo.textContent === '標記完成' && !!doc.querySelector('.route-stop-number'));
+        undo.textContent === '標記完成' && names()[originalIndex].tagName === 'A' &&
+        order() === originalOrder);
       completion().click();
       check('Checking the list completion grays the marker and updates the popup',
         completion().checked && pin().classList.contains('quest-pin-completed') &&
-        undo.textContent === '取消完成' && !doc.querySelector('.route-stop-number'));
+        undo.textContent === '取消完成' && names()[originalIndex].tagName === 'SPAN' &&
+        order() === originalOrder);
       undo.click();
       check('Undo completion restores the station color',
         await until(() => pin() && !pin().classList.contains('quest-pin-completed') && !completion().checked));
@@ -219,7 +236,6 @@ frame.onload = async () => {
         const matches = QuestFilters.matchingQuest(QuestParser.merge([],
           QuestParser.parse(JSON.parse(snapshot.textContent)).records).records);
         const origin = { latitude: matches[0].lat, longitude: matches[0].lng };
-        const nearbyCount = QuestFilters.nearby(matches, origin, 5).length;
         const mock = '<script>Object.defineProperty(navigator, "geolocation", { value: {' +
           'watchPosition(success) { window.moveFixture = coords => success({coords});' +
           'queueMicrotask(() => window.moveFixture(' + JSON.stringify(origin) + ')); return 0; },' +
@@ -228,30 +244,47 @@ frame.onload = async () => {
         nearbyFrame.srcdoc = source.replace('<head>', '<head>' + mock);
         document.body.append(nearbyFrame);
         const nearbyDoc = name => nearbyFrame.contentDocument?.getElementById(name);
-        const ready = await until(() => nearbyDoc('count')?.textContent === matches.length.toLocaleString('zh-TW'));
+        const expectedCount = matches.length.toLocaleString('zh-TW');
+        const located = await until(() => nearbyFrame.contentDocument?.querySelector('.current-location') &&
+          nearbyDoc('count')?.textContent === expectedCount);
         const mapControls = nearbyFrame.contentDocument;
         const recenter = mapControls.querySelector('.map-recenter');
         const zoom = mapControls.querySelector('.leaflet-control-zoom');
-        check('Snapshot opens in overview without starting location tracking',
-          ready && nearbyDoc('range').textContent === '全部範圍' &&
-          nearbyFrame.contentWindow.moveFixture === undefined);
+        check('Opening the page starts following while keeping the full station set',
+          located && typeof nearbyFrame.contentWindow.moveFixture === 'function' &&
+          !nearbyDoc('fit'));
         check('Recenter button is positioned above zoom controls',
           recenter.getBoundingClientRect().bottom <= zoom.getBoundingClientRect().top);
-        recenter.click();
-        const located = await until(() => nearbyDoc('range')?.textContent === '附近 5 公里');
-        check('Recenter starts tracking and shows nearby quests',
-          located && nearbyDoc('count').textContent === nearbyCount.toLocaleString('zh-TW'));
-        const positionMarker = mapControls.querySelector('.current-location').getBoundingClientRect();
-        const mapBox = nearbyDoc('map').getBoundingClientRect();
-        check('Recenter puts the current position in the middle of the map',
-          Math.abs(positionMarker.x + positionMarker.width / 2 - (mapBox.x + mapBox.width / 2)) <= 2 &&
-          Math.abs(positionMarker.y + positionMarker.height / 2 - (mapBox.y + mapBox.height / 2)) <= 2);
+        const centered = () => {
+          const marker = mapControls.querySelector('.current-location').getBoundingClientRect();
+          const mapBox = nearbyDoc('map').getBoundingClientRect();
+          return Math.abs(marker.x + marker.width / 2 - (mapBox.x + mapBox.width / 2)) <= 2 &&
+            Math.abs(marker.y + marker.height / 2 - (mapBox.y + mapBox.height / 2)) <= 2;
+        };
+        check('Automatic recenter puts the current position in the middle of the map',
+          await until(centered));
         nearbyFrame.contentWindow.moveFixture({ latitude: 25.03, longitude: 121.56 });
-        check('Moving GPS updates nearby stations', nearbyDoc('count').textContent === '0');
-        nearbyDoc('fit')?.click();
-        check('Show all removes the distance restriction',
-          nearbyDoc('count')?.textContent === matches.length.toLocaleString('zh-TW') &&
+        check('Moving GPS pans the map without filtering the station markers',
+          await until(() => centered() && mapControls.querySelectorAll('.quest-pin').length === matches.length) &&
+          nearbyDoc('count').textContent === expectedCount);
+        nearbyDoc('locate').click();
+        check('Stopping location tracking keeps the full station set',
+          nearbyDoc('count')?.textContent === expectedCount &&
           nearbyFrame.contentWindow.moveFixture === null);
+        recenter.click();
+        check('The recenter control restarts following after stopping',
+          await until(() => typeof nearbyFrame.contentWindow.moveFixture === 'function' && centered()));
+
+        const deniedMock = '<script>Object.defineProperty(navigator, "geolocation", { value: {' +
+          'watchPosition(success, error) { queueMicrotask(() => error({code:1})); return 0; },' +
+          'clearWatch() {} } });</' + 'script>';
+        const deniedFrame = document.createElement('iframe');
+        deniedFrame.srcdoc = source.replace('<head>', '<head>' + deniedMock);
+        document.body.append(deniedFrame);
+        const deniedDoc = name => deniedFrame.contentDocument?.getElementById(name);
+        check('Declining startup location leaves all stations available',
+          await until(() => deniedDoc('map-status')?.textContent.includes('定位權限') &&
+            deniedDoc('count')?.textContent === expectedCount));
       }
     }
   } catch (error) {
