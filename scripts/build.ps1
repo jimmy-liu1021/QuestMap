@@ -3,6 +3,16 @@ param([switch]$LocalSnapshot, [string]$SnapshotPath)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $html = [IO.File]::ReadAllText("$root/index.html")
+$leafletDir = "$root/vendor/leaflet"
+$leafletCss = [IO.File]::ReadAllText("$leafletDir/leaflet.css")
+foreach ($name in 'layers.png', 'layers-2x.png', 'marker-icon.png') {
+    $image = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$leafletDir/images/$name"))
+    $leafletCss = $leafletCss.Replace("url(images/$name)", "url(data:image/png;base64,$image)")
+}
+$leafletJs = [IO.File]::ReadAllText("$leafletDir/leaflet.js") -replace '(?m)^//# sourceMappingURL=.*$', ''
+$leafletLicense = [IO.File]::ReadAllText("$leafletDir/LICENSE")
+$html = $html.Replace('<link rel="stylesheet" href="vendor/leaflet/leaflet.css">', "<style>`n$leafletCss`n</style>")
+$html = $html.Replace('<script src="vendor/leaflet/leaflet.js"></script>', "<script>`n/*`n$leafletLicense`n*/`n$leafletJs`n</script>")
 $css = [IO.File]::ReadAllText("$root/css/style.css")
 $html = $html.Replace('<link rel="stylesheet" href="css/style.css">', "<style>`n$css</style>")
 foreach ($module in 'parser', 'filters', 'route', 'map', 'app') {
