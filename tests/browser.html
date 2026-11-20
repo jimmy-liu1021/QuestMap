@@ -74,11 +74,6 @@ check('Rejects invalid document', rejected);
 const newest = { ...known, timestamp: known.timestamp + 100 };
 const merged = QuestParser.merge([known], [newest, known, unknown]);
 check('Merges and keeps newest', merged.duplicates === 2 && merged.records[0] === newest);
-const tasks = new Set([known.task.key, unknown.task.key]);
-const rewards = new Set([unknown.reward.key]);
-check('Search + OR within task + AND with reward', QuestFilters.apply(parsed.records, ' 美泰 ', tasks, rewards)[0] === unknown &&
-  QuestFilters.apply(parsed.records, '鳳山', tasks, rewards).length === 0);
-check('Unknown task selectable', QuestFilters.categories(parsed.records, 'task').some(([key]) => key === unknown.task.key));
 const variants = QuestParser.parse({ fp: [first,
   { ...first, e: '16^2^8^0^^^^^Excellent' },
   { ...first, f: '4^890^^24^N^^^N' },
@@ -94,7 +89,7 @@ const large = Array.from({ length: 15000 }, (_, index) => ({
 }));
 const largeRecords = QuestParser.merge([], QuestParser.parse({ fp: large }).records).records;
 check('15,000 records parse and filter', largeRecords.length === 15000 &&
-  QuestFilters.apply(largeRecords, '批次 14999', new Set(), new Set()).length === 1);
+  QuestFilters.matchingQuest(largeRecords).length === 15000);
 
 function until(condition, timeout = 12000) {
   const deadline = Date.now() + timeout;
@@ -153,12 +148,9 @@ frame.onload = async () => {
         allMarkers && doc.querySelectorAll('.quest-pin').length === 15001 &&
         !doc.querySelector('.marker-cluster'));
     }
-    id('filters').open = true;
-    check('320px expanded filters and map remain in viewport', doc.documentElement.scrollWidth <= 320 &&
+    check('320px toolbar has no filters and leaves room for the map',
+      !id('filters') && !id('search') && doc.documentElement.scrollWidth <= 320 &&
       id('map').getBoundingClientRect().height > 220);
-    id('search').value = '鳳山';
-    id('search').dispatchEvent(new Event('input'));
-    check('Interactive search after large import', await until(() => id('count').textContent === '1'));
     id('fit').click();
     const pin = () => doc.querySelector('.quest-pin[title="鳳山代天府"]');
     if (leaflet && await until(pin)) {
@@ -185,16 +177,13 @@ frame.onload = async () => {
       navigate.nextElementSibling.click();
       const grey = await until(() => pin()?.classList.contains('quest-pin-completed'));
       check('Completing a station keeps it visible and turns it gray',
-        grey && id('count').textContent === '1' && !doc.querySelector('.route-stop-number'));
+        grey && id('count').textContent === '15,001' && !doc.querySelector('.route-stop-number'));
       const undo = popup.querySelector('.route-navigation').nextElementSibling;
       check('Completed station can be undone within the popup', undo.textContent === '取消完成');
       undo.click();
       check('Undo completion restores the station color',
         await until(() => pin() && !pin().classList.contains('quest-pin-completed')));
     } else check('Marker popup and navigation', false);
-    id('clear').click();
-    check('Clear resets secondary filters and keeps the exact code pair',
-      id('count').textContent === '15,001');
     const fixture = await localFixture();
     if (fixture) {
       const before = QuestParser.merge([], QuestParser.parse(JSON.parse(fixture)).records).records;

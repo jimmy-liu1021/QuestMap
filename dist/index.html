@@ -691,7 +691,7 @@ body {
 }
 [hidden] { display: none !important; }
 button, input { font: inherit; }
-button, summary, .directions { min-height: 44px; }
+button, .directions { min-height: 44px; }
 button {
   padding: .4rem .7rem;
   color: var(--ink);
@@ -723,32 +723,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   max-height: 52%;
   overflow: auto;
 }
-.toolbar-row, .search-row { display: flex; gap: .5rem; align-items: center; }
+.toolbar-row { display: flex; gap: .5rem; align-items: center; }
 .total { margin: 0 auto 0 0; font-size: .875rem; }
 output { font-size: 1.25rem; font-weight: 750; }
-summary { align-content: center; cursor: pointer; font-weight: 650; }
-.filter-body { padding-bottom: .4rem; }
-input[type=search] {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: .65rem;
-  padding: .45rem .6rem;
-}
-.filter-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
-fieldset { min-width: 0; margin: .5rem 0 0; border: 1px solid var(--border); border-radius: .6rem; padding: 0 .35rem; }
-legend { font-size: .875rem; font-weight: 650; }
-.choices { max-height: 8.25rem; overflow: auto; }
-.choices label {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  gap: .4rem;
-  font-size: .875rem;
-  overflow-wrap: anywhere;
-}
-.choices input { accent-color: #206b49; width: 1rem; height: 1rem; flex-shrink: 0; }
 .status { margin: .25rem 0; font-size: .875rem; overflow-wrap: anywhere; }
 .status.stale { color: #8a3d09; font-weight: 650; }
 .route-navigation { margin-right: .35rem; background: #20583f; color: white; font-weight: 650; }
@@ -863,19 +840,6 @@ legend { font-size: .875rem; font-weight: 650; }
         <button type="button" id="fit">全覽</button>
         <button type="button" id="locate" aria-pressed="false">跟隨定位</button>
       </div>
-      <details id="filters">
-        <summary>任務與獎勵篩選</summary>
-        <div class="filter-body">
-          <div class="search-row">
-            <input id="search" type="search" aria-label="搜尋補給站名稱" placeholder="搜尋補給站名稱">
-            <button type="button" id="clear">清除篩選</button>
-          </div>
-          <div class="filter-groups">
-            <fieldset><legend>任務</legend><div id="tasks" class="choices"></div></fieldset>
-            <fieldset><legend>獎勵</legend><div id="rewards" class="choices"></div></fieldset>
-          </div>
-        </div>
-      </details>
       <p class="status" id="import-status" role="status"></p>
       <p class="status" id="snapshot-status" role="status"></p>
     </section>
@@ -949,12 +913,7 @@ const QuestParser = (() => {
     const raw = typeof value === 'string' ? value : '';
     const parts = raw.split('^');
     const known = mappings[kind].get(raw);
-    const key = known ? 'label:' + known : 'raw:' + parts[0];
-    return {
-      raw, parts, key,
-      label: known || raw || '未提供',
-      category: known || (parts[0] ? '代碼 ' + parts[0] : '未提供')
-    };
+    return { raw, parts, label: known || raw || '未提供' };
   }
 
   function coordinate(value, limit) {
@@ -1006,20 +965,6 @@ const QuestParser = (() => {
 </script>
   <script>
 const QuestFilters = (() => {
-  function categories(records, kind) {
-    const options = new Map(records.map(record => [record[kind].key, record[kind].category]));
-    return [...options].sort((left, right) => left[1].localeCompare(right[1], 'zh-TW', { numeric: true }));
-  }
-
-  function apply(records, search, tasks, rewards) {
-    const query = search.trim().normalize('NFKC').toLowerCase();
-    return records.filter(record =>
-      (!query || record.name.normalize('NFKC').toLowerCase().includes(query)) &&
-      (!tasks.size || tasks.has(record.task.key)) &&
-      (!rewards.size || rewards.has(record.reward.key))
-    );
-  }
-
   function matchingQuest(records) {
     return records.filter(record =>
       record.task.raw === featuredQuest.task && record.reward.raw === featuredQuest.reward
@@ -1036,7 +981,7 @@ const QuestFilters = (() => {
     );
   }
 
-  return { categories, apply, matchingQuest, nearby };
+  return { matchingQuest, nearby };
 })();
 
 </script>
@@ -1335,9 +1280,6 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
 (() => {
   const byId = id => document.getElementById(id);
   const input = byId('files');
-  const search = byId('search');
-  const tasks = new Set();
-  const rewards = new Set();
   const selectedStops = new Map();
   const completed = new Set();
   const completionKey = 'quest-map-completed';
@@ -1356,7 +1298,6 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   }, addActions);
   let records = [];
   let matching = [];
-  let filterTimer;
   let center = null;
 
   function syncCompletionDay() {
@@ -1372,14 +1313,12 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
 
   function refresh(fit = false) {
     syncCompletionDay();
-    const inRange = center ? QuestFilters.nearby(matching, center, 5) : matching;
-    const visible = QuestFilters.apply(inRange, search.value, tasks, rewards);
+    const visible = center ? QuestFilters.nearby(matching, center, 5) : matching;
     byId('count').textContent = visible.length.toLocaleString('zh-TW');
     byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
     map?.render(visible, fit, center, completed);
     byId('empty').hidden = visible.length > 0;
-    byId('empty').textContent = center && !inRange.length ? '附近 5 公里沒有符合的任務' :
-      matching.length ? '沒有符合條件的補給站' :
+    byId('empty').textContent = center ? '附近 5 公里沒有符合的任務' :
       records.length ? '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
   }
 
@@ -1467,44 +1406,11 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     popup.append(label, navigate, done, navigationStatus);
   }
 
-  function options(kind, target, selected) {
-    const choices = QuestFilters.categories(matching, kind);
-    const keys = new Set(choices.map(([key]) => key));
-    for (const key of selected) if (!keys.has(key)) selected.delete(key);
-    const nodes = choices.map(([key, caption]) => {
-      const label = document.createElement('label');
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = selected.has(key);
-      checkbox.addEventListener('change', () => {
-        if (checkbox.checked) selected.add(key);
-        else selected.delete(key);
-        refresh();
-      });
-      label.append(checkbox, document.createTextNode(caption));
-      return label;
-    });
-    target.replaceChildren(...nodes);
-  }
-
   function refreshData(fit) {
     matching = QuestFilters.matchingQuest(records);
-    options('task', byId('tasks'), tasks);
-    options('reward', byId('rewards'), rewards);
     refresh(fit);
   }
 
-  search.addEventListener('input', () => {
-    clearTimeout(filterTimer);
-    filterTimer = setTimeout(refresh, 150);
-  });
-  byId('clear').addEventListener('click', () => {
-    search.value = '';
-    tasks.clear();
-    rewards.clear();
-    document.querySelectorAll('#filters input[type=checkbox]').forEach(box => { box.checked = false; });
-    refresh();
-  });
   byId('fit').addEventListener('click', () => {
     map?.stopFollowing();
     center = null;

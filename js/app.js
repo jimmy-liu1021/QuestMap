@@ -1,9 +1,6 @@
 (() => {
   const byId = id => document.getElementById(id);
   const input = byId('files');
-  const search = byId('search');
-  const tasks = new Set();
-  const rewards = new Set();
   const selectedStops = new Map();
   const completed = new Set();
   const completionKey = 'quest-map-completed';
@@ -22,7 +19,6 @@
   }, addActions);
   let records = [];
   let matching = [];
-  let filterTimer;
   let center = null;
 
   function syncCompletionDay() {
@@ -38,14 +34,12 @@
 
   function refresh(fit = false) {
     syncCompletionDay();
-    const inRange = center ? QuestFilters.nearby(matching, center, 5) : matching;
-    const visible = QuestFilters.apply(inRange, search.value, tasks, rewards);
+    const visible = center ? QuestFilters.nearby(matching, center, 5) : matching;
     byId('count').textContent = visible.length.toLocaleString('zh-TW');
     byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
     map?.render(visible, fit, center, completed);
     byId('empty').hidden = visible.length > 0;
-    byId('empty').textContent = center && !inRange.length ? '附近 5 公里沒有符合的任務' :
-      matching.length ? '沒有符合條件的補給站' :
+    byId('empty').textContent = center ? '附近 5 公里沒有符合的任務' :
       records.length ? '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
   }
 
@@ -133,44 +127,11 @@
     popup.append(label, navigate, done, navigationStatus);
   }
 
-  function options(kind, target, selected) {
-    const choices = QuestFilters.categories(matching, kind);
-    const keys = new Set(choices.map(([key]) => key));
-    for (const key of selected) if (!keys.has(key)) selected.delete(key);
-    const nodes = choices.map(([key, caption]) => {
-      const label = document.createElement('label');
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = selected.has(key);
-      checkbox.addEventListener('change', () => {
-        if (checkbox.checked) selected.add(key);
-        else selected.delete(key);
-        refresh();
-      });
-      label.append(checkbox, document.createTextNode(caption));
-      return label;
-    });
-    target.replaceChildren(...nodes);
-  }
-
   function refreshData(fit) {
     matching = QuestFilters.matchingQuest(records);
-    options('task', byId('tasks'), tasks);
-    options('reward', byId('rewards'), rewards);
     refresh(fit);
   }
 
-  search.addEventListener('input', () => {
-    clearTimeout(filterTimer);
-    filterTimer = setTimeout(refresh, 150);
-  });
-  byId('clear').addEventListener('click', () => {
-    search.value = '';
-    tasks.clear();
-    rewards.clear();
-    document.querySelectorAll('#filters input[type=checkbox]').forEach(box => { box.checked = false; });
-    refresh();
-  });
   byId('fit').addEventListener('click', () => {
     map?.stopFollowing();
     center = null;

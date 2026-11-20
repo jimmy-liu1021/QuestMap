@@ -24,12 +24,7 @@ const QuestParser = (() => {
     const raw = typeof value === 'string' ? value : '';
     const parts = raw.split('^');
     const known = mappings[kind].get(raw);
-    const key = known ? 'label:' + known : 'raw:' + parts[0];
-    return {
-      raw, parts, key,
-      label: known || raw || '未提供',
-      category: known || (parts[0] ? '代碼 ' + parts[0] : '未提供')
-    };
+    return { raw, parts, label: known || raw || '未提供' };
   }
 
   function coordinate(value, limit) {
