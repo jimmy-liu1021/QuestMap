@@ -36,6 +36,31 @@ def quest_bounds(url):
     return None
 
 
+def check_geolocation(page, location):
+    return page.evaluate(
+        """expected => new Promise(resolve => {
+            if (!navigator.geolocation) {
+                resolve('unavailable');
+                return;
+            }
+            const timer = setTimeout(() => resolve('diagnostic_timeout'), 5000);
+            const finish = status => {
+                clearTimeout(timer);
+                resolve(status);
+            };
+            navigator.geolocation.getCurrentPosition(({coords}) => {
+                const matches = Math.abs(coords.latitude - expected.latitude) < 0.0001 &&
+                    Math.abs(coords.longitude - expected.longitude) < 0.0001;
+                finish(matches ? 'matches_configured_position' : 'different_position');
+            }, error => {
+                finish(({1: 'permission_denied', 2: 'position_unavailable', 3: 'timeout'})[error.code]
+                    || 'unknown_error');
+            }, {timeout: 3500, maximumAge: 0});
+        })""",
+        location,
+    )
+
+
 def analyze(response, on_valid=None):
     output = {"http_status": response.status, "valid_rows": 0}
     if response.status != 200:
@@ -163,6 +188,11 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
             report["geolocation_permission"] = page.evaluate(
                 "() => navigator.permissions.query({name: 'geolocation'}).then(result => result.state, () => 'unknown')"
             )
+            if report["geolocation_permission"] == "granted":
+                try:
+                    report["geolocation_check"] = check_geolocation(page, location)
+                except browser_error:
+                    report["geolocation_check"] = "diagnostic_error"
         if report["responses"]:
             return "no_valid_quests"
         if report["off_target_responses"]:
@@ -181,7 +211,8 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
 
 
 def run(options, on_valid=None):
-    report = {"mode": "headed" if options.headed else "headless", "interaction": "none"}
+    report = {"mode": "headed" if options.headed else "headless", "interaction": "none",
+              "platform": sys.platform}
     try:
         from playwright.sync_api import Error, TimeoutError as BrowserTimeout, sync_playwright
     except ImportError:
@@ -196,6 +227,7 @@ def run(options, on_valid=None):
             browser = playwright.chromium.launch(
                 channel="chromium", headless=not options.headed, timeout=15000
             )
+            report["browser_version"] = browser.version
             try:
                 report["outcome"] = observe(browser, options, BrowserTimeout, Error, report, on_valid)
             finally:
