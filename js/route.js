@@ -66,18 +66,14 @@ const QuestRoute = (() => {
     return ordered;
   }
 
-  function directions(stops, start, finish, maxWaypoints = 9) {
-    const point = stop => stop.lat + ',' + stop.lng;
-    const destinations = [...stops];
-    if (finish) destinations.push(finish);
-    if (start && destinations.length && point(start) === point(destinations[0])) destinations.shift();
-    if (!destinations.length || destinations.length - 1 > maxWaypoints) return null;
+  function navigationUrl(destination) {
     const params = new URLSearchParams({
-      api: '1', travelmode: 'two-wheeler', destination: point(destinations.at(-1))
+      api: '1',
+      travelmode: 'two-wheeler',
+      dir_action: 'navigate',
+      destination: destination.lat + ',' + destination.lng,
     });
-    if (start) params.set('origin', point(start));
-    if (destinations.length > 1) params.set('waypoints', destinations.slice(0, -1).map(point).join('|'));
     return 'https://www.google.com/maps/dir/?' + params;
   }
-  return { order, directions, MAX_STOPS };
+  return { order, navigationUrl, MAX_STOPS };
 })();

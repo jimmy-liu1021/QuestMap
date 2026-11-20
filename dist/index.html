@@ -728,12 +728,34 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 output { font-size: 1.25rem; font-weight: 750; }
 .status { margin: .25rem 0; font-size: .875rem; overflow-wrap: anywhere; }
 .status.stale { color: #8a3d09; font-weight: 650; }
-.route-navigation { margin-right: .35rem; background: #20583f; color: white; font-weight: 650; }
-.navigation-status:empty { display: none; }
 .finished-toggle { display: flex; gap: .45rem; align-items: center; min-height: 44px; }
 .finished-toggle input { width: 1.05rem; height: 1.05rem; accent-color: #206b49; }
 .status:empty, .map-notice:empty { display: none; }
 .map-area { position: relative; flex: 1; min-height: 0; }
+.selected-stations {
+  position: absolute;
+  z-index: 600;
+  left: max(.65rem, env(safe-area-inset-left));
+  bottom: calc(2.2rem + env(safe-area-inset-bottom));
+  width: min(15rem, calc(100% - 5rem));
+  border: 1px solid var(--border);
+  border-radius: .65rem;
+  background: white;
+  box-shadow: 0 1px 5px #0003;
+}
+.selected-stations summary { padding: .65rem .8rem; min-height: 44px; cursor: pointer; font-weight: 700; }
+.selected-stations:not([open]) > :not(summary) { display: none; }
+.selected-stations ol { margin: 0; padding-left: 2.05rem; max-height: min(13rem, 34dvh); overflow-y: auto; }
+.selected-stations li { padding-right: .5rem; }
+.selected-stations a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: .25rem .35rem;
+  color: #234b9c;
+  overflow-wrap: anywhere;
+}
+#return-to-start { padding-inline: .8rem; border-top: 1px solid var(--border); }
 #map { position: absolute; inset: 0; background: #e3ede3; }
 .map-notice {
   position: absolute;
@@ -845,6 +867,11 @@ output { font-size: 1.25rem; font-weight: 750; }
     </section>
     <section class="map-area" aria-label="地圖">
       <div id="map"></div>
+      <details id="selected-stations" class="selected-stations" hidden>
+        <summary>已選站點 <span id="selected-station-count"></span></summary>
+        <ol id="selected-station-list"></ol>
+        <a id="return-to-start" target="_blank" rel="noopener noreferrer">返回起點</a>
+      </details>
       <p id="empty" class="map-notice">匯入任務 JSON 以顯示補給站</p>
       <p id="map-status" class="map-notice" role="status"></p>
     </section>
@@ -1054,20 +1081,16 @@ const QuestRoute = (() => {
     return ordered;
   }
 
-  function directions(stops, start, finish, maxWaypoints = 9) {
-    const point = stop => stop.lat + ',' + stop.lng;
-    const destinations = [...stops];
-    if (finish) destinations.push(finish);
-    if (start && destinations.length && point(start) === point(destinations[0])) destinations.shift();
-    if (!destinations.length || destinations.length - 1 > maxWaypoints) return null;
+  function navigationUrl(destination) {
     const params = new URLSearchParams({
-      api: '1', travelmode: 'two-wheeler', destination: point(destinations.at(-1))
+      api: '1',
+      travelmode: 'two-wheeler',
+      dir_action: 'navigate',
+      destination: destination.lat + ',' + destination.lng,
     });
-    if (start) params.set('origin', point(start));
-    if (destinations.length > 1) params.set('waypoints', destinations.slice(0, -1).map(point).join('|'));
     return 'https://www.google.com/maps/dir/?' + params;
   }
-  return { order, directions, MAX_STOPS };
+  return { order, navigationUrl, MAX_STOPS };
 })();
 </script>
   <script>
@@ -1113,7 +1136,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     }
     const link = document.createElement('a');
     link.className = 'directions';
-    link.href = QuestRoute.directions([], null, record);
+    link.href = QuestRoute.navigationUrl(record);
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     link.textContent = 'Google Maps 導航';
@@ -1280,16 +1303,16 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
 (() => {
   const byId = id => document.getElementById(id);
   const input = byId('files');
+  const stationPanel = byId('selected-stations');
+  const stationList = byId('selected-station-list');
+  const returnLink = byId('return-to-start');
   const selectedStops = new Map();
   const completed = new Set();
   const completionKey = 'quest-map-completed';
   let completionDay = '';
-  let route = [];
   let position = null;
   let tripOrigin = null;
   let legStart = null;
-  const waypointLimit = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 3 : 9;
   const report = message => { byId('map-status').textContent = message; };
   const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
     center = coords;
@@ -1323,7 +1346,24 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   }
 
   function refreshTrip() {
-    route = QuestRoute.order(selectedStops.values(), legStart, tripOrigin);
+    const route = QuestRoute.order(selectedStops.values(), legStart, tripOrigin);
+    byId('selected-station-count').textContent = route.length.toLocaleString('zh-TW');
+    const items = route.map(stop => {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = QuestRoute.navigationUrl(stop);
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = stop.name;
+      item.append(link);
+      return item;
+    });
+    stationList.replaceChildren(...items);
+    stationList.hidden = !items.length;
+    if (tripOrigin) returnLink.href = QuestRoute.navigationUrl(tripOrigin);
+    else returnLink.removeAttribute('href');
+    stationPanel.hidden = !tripOrigin;
+    if (stationPanel.hidden) stationPanel.open = false;
     map?.showRoute(route, legStart, tripOrigin);
   }
 
@@ -1372,27 +1412,9 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       refreshTrip();
     });
     label.append(check, document.createTextNode('加入路線'));
-    const navigate = document.createElement('button');
-    navigate.type = 'button';
-    navigate.className = 'route-navigation';
-    navigate.textContent = '路線導航';
-    const navigationStatus = document.createElement('p');
-    navigationStatus.className = 'navigation-status';
-    navigationStatus.setAttribute('role', 'status');
-    check.addEventListener('change', () => { navigationStatus.textContent = ''; });
-    navigate.addEventListener('click', () => {
-      const link = QuestRoute.directions(route, legStart, tripOrigin, waypointLimit);
-      if (link) {
-        window.open(link, '_blank', 'noopener,noreferrer');
-      } else {
-        const message = route.length ?
-          '此裝置的 Google Maps 單一路線最多支援 ' + waypointLimit + ' 個中途站，請減少勾選站點。' :
-          '請先勾選要加入路線的補給站。';
-        navigationStatus.textContent = message;
-      }
-    });
     const done = document.createElement('button');
     done.type = 'button';
+    done.className = 'mark-complete';
     const updateLabel = () => {
       check.checked = selectedStops.has(record.key);
       check.disabled = completed.has(record.key);
@@ -1403,7 +1425,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       updateLabel();
     });
     updateLabel();
-    popup.append(label, navigate, done, navigationStatus);
+    popup.append(label, done);
   }
 
   function refreshData(fit) {

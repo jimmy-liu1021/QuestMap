@@ -17,7 +17,7 @@
 ## iPhone Safari
 
 - 按「跟隨定位」並允許 Safari 使用位置。地圖開著時會隨位置更新附近 5 公里的任務。「停止跟隨」會停在上次位置，「全覽」會顯示整份快照。
-- 在站點彈窗勾選「加入路線」，查看地圖上的編號，再按下方「路線導航」開啟單一 Google Maps 機車路線。第一次勾選時固定起點，有定位時用當下的位置，否則用第一站。地圖最多計算 16 站的最短直線往返順序。Google Maps 單一路線的中途站限制在手機瀏覽器為 3 站，桌面瀏覽器為 9 站。[Google Maps URL 說明](https://developers.google.com/maps/documentation/urls/get-started#directions-action)
+- 在站點彈窗勾選「加入路線」，再展開地圖左下角的「已選站點」。清單依地圖編號排列，點站名即可開啟該站的 Google Maps 機車導航，最後可點「返回起點」。第一次勾選時固定起點，有定位時用當下的位置，否則用第一站。地圖最多計算 16 站的最短直線往返順序。[Google Maps URL 說明](https://developers.google.com/maps/documentation/urls/get-started#directions-action)
 - 按「標記完成」後，站點會變灰並移出路線。再打開該站點可取消完成。完成紀錄保存在目前瀏覽器，按台灣日期重新計算。
 
 1. 將 JSON 存到 iCloud Drive 或「我的 iPhone」的「檔案」App。

@@ -40,7 +40,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     }
     const link = document.createElement('a');
     link.className = 'directions';
-    link.href = QuestRoute.directions([], null, record);
+    link.href = QuestRoute.navigationUrl(record);
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     link.textContent = 'Google Maps 導航';

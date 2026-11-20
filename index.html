@@ -32,6 +32,11 @@
     </section>
     <section class="map-area" aria-label="地圖">
       <div id="map"></div>
+      <details id="selected-stations" class="selected-stations" hidden>
+        <summary>已選站點 <span id="selected-station-count"></span></summary>
+        <ol id="selected-station-list"></ol>
+        <a id="return-to-start" target="_blank" rel="noopener noreferrer">返回起點</a>
+      </details>
       <p id="empty" class="map-notice">匯入任務 JSON 以顯示補給站</p>
       <p id="map-status" class="map-notice" role="status"></p>
     </section>
