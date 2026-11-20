@@ -175,17 +175,27 @@ frame.onload = async () => {
         doc.querySelector('.route-start-label')?.textContent === '起點');
       popup.querySelector('.mark-complete').click();
       const grey = await until(() => pin()?.classList.contains('quest-pin-completed'));
+      const completion = () => id('selected-station-list').querySelector('input[type=checkbox]');
       check('Completing a station keeps it visible and turns it gray',
         grey && id('count').textContent === '15,001' && !doc.querySelector('.route-stop-number') &&
-        !id('selected-station-list').children.length);
+        completion().checked);
       const returning = new URL(id('return-to-start').href).searchParams;
       check('Returning to the original start remains available after finishing',
         returning.get('destination') === '22.627163,120.372011' && returning.get('dir_action') === 'navigate');
       const undo = popup.querySelector('.mark-complete');
       check('Completed station can be undone within the popup', undo.textContent === '取消完成');
+      summary.click();
+      completion().click();
+      check('Unchecking the list completion restores the marker and popup action',
+        !completion().checked && !pin().classList.contains('quest-pin-completed') &&
+        undo.textContent === '標記完成' && !!doc.querySelector('.route-stop-number'));
+      completion().click();
+      check('Checking the list completion grays the marker and updates the popup',
+        completion().checked && pin().classList.contains('quest-pin-completed') &&
+        undo.textContent === '取消完成' && !doc.querySelector('.route-stop-number'));
       undo.click();
       check('Undo completion restores the station color',
-        await until(() => pin() && !pin().classList.contains('quest-pin-completed')));
+        await until(() => pin() && !pin().classList.contains('quest-pin-completed') && !completion().checked));
     } else check('Marker popup and navigation', false);
     const fixture = await localFixture();
     if (fixture) {

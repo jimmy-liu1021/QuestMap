@@ -72,6 +72,20 @@ output { font-size: 1.25rem; font-weight: 750; }
 .selected-stations:not([open]) > :not(summary) { display: none; }
 .selected-stations ol { margin: 0; padding-left: 2.05rem; max-height: min(13rem, 34dvh); overflow-y: auto; }
 .selected-stations li { padding-right: .5rem; }
+.selected-station-row { display: flex; align-items: center; gap: .25rem; }
+.selected-station-row a { flex: 1; min-width: 0; }
+.station-completion {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-height: 44px;
+  gap: .15rem;
+  font-size: .875rem;
+  cursor: pointer;
+}
+.station-completion input { width: 1.05rem; height: 1.05rem; accent-color: #206b49; }
+.selected-station-completed::marker { content: ''; }
+.selected-station-completed a { color: #666; }
 .selected-stations a {
   display: flex;
   align-items: center;

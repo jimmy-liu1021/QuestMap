@@ -11,6 +11,7 @@
   let position = null;
   let tripOrigin = null;
   let legStart = null;
+  let syncPopup = null;
   const report = message => { byId('map-status').textContent = message; };
   const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
     center = coords;
@@ -30,10 +31,11 @@
       const saved = JSON.parse(localStorage.getItem(completionKey));
       if (saved?.day === day && Array.isArray(saved.keys)) saved.keys.forEach(key => completed.add(key));
     } catch { /* Storage can be unavailable in some browsing modes. */ }
+    return true;
   }
 
   function refresh(fit = false) {
-    syncCompletionDay();
+    if (syncCompletionDay()) refreshTrip();
     const visible = center ? QuestFilters.nearby(matching, center, 5) : matching;
     byId('count').textContent = visible.length.toLocaleString('zh-TW');
     byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
@@ -43,17 +45,34 @@
       records.length ? '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
   }
 
-  function refreshTrip() {
-    const route = QuestRoute.order(selectedStops.values(), legStart, tripOrigin);
-    byId('selected-station-count').textContent = route.length.toLocaleString('zh-TW');
-    const items = route.map(stop => {
+  function refreshTrip(focusKey) {
+    const stops = [...selectedStops.values()];
+    const pending = stops.filter(stop => !completed.has(stop.key));
+    const finished = stops.filter(stop => completed.has(stop.key));
+    const route = QuestRoute.order(pending, legStart, tripOrigin);
+    byId('selected-station-count').textContent = stops.length.toLocaleString('zh-TW');
+    let focused;
+    const items = [...route, ...finished].map(stop => {
       const item = document.createElement('li');
+      item.classList.toggle('selected-station-completed', completed.has(stop.key));
+      const row = document.createElement('div');
+      row.className = 'selected-station-row';
       const link = document.createElement('a');
       link.href = QuestRoute.navigationUrl(stop);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = stop.name;
-      item.append(link);
+      const label = document.createElement('label');
+      label.className = 'station-completion';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = completed.has(stop.key);
+      checkbox.setAttribute('aria-label', stop.name + '已完成');
+      checkbox.addEventListener('change', () => toggleComplete(stop, true));
+      if (stop.key === focusKey) focused = checkbox;
+      label.append(checkbox, document.createTextNode('完成'));
+      row.append(link, label);
+      item.append(row);
       return item;
     });
     stationList.replaceChildren(...items);
@@ -62,21 +81,23 @@
     else returnLink.removeAttribute('href');
     stationPanel.hidden = !tripOrigin;
     if (stationPanel.hidden) stationPanel.open = false;
+    focused?.focus({ preventScroll: true });
+    syncPopup?.();
     map?.showRoute(route, legStart, tripOrigin);
   }
 
-  function toggleComplete(record) {
+  function toggleComplete(record, fromList = false) {
     syncCompletionDay();
     if (completed.has(record.key)) {
       completed.delete(record.key);
     } else {
       completed.add(record.key);
-      if (selectedStops.delete(record.key)) legStart = { lat: record.lat, lng: record.lng };
+      if (selectedStops.has(record.key)) legStart = { lat: record.lat, lng: record.lng };
     }
     try {
       localStorage.setItem(completionKey, JSON.stringify({ day: completionDay, keys: [...completed] }));
     } catch { /* Keep completion in memory if storage is unavailable. */ }
-    refreshTrip();
+    refreshTrip(fromList ? record.key : undefined);
     refresh();
   }
 
@@ -86,8 +107,6 @@
     label.className = 'finished-toggle';
     const check = document.createElement('input');
     check.type = 'checkbox';
-    check.checked = selectedStops.has(record.key);
-    check.disabled = completed.has(record.key);
     check.addEventListener('change', () => {
       if (check.checked) {
         if (selectedStops.size >= QuestRoute.MAX_STOPS) {
@@ -115,13 +134,12 @@
     done.className = 'mark-complete';
     const updateLabel = () => {
       check.checked = selectedStops.has(record.key);
-      check.disabled = completed.has(record.key);
-      done.textContent = check.disabled ? '取消完成' : '標記完成';
+      const isComplete = completed.has(record.key);
+      check.disabled = isComplete && !check.checked;
+      done.textContent = isComplete ? '取消完成' : '標記完成';
     };
-    done.addEventListener('click', () => {
-      toggleComplete(record);
-      updateLabel();
-    });
+    done.addEventListener('click', () => toggleComplete(record));
+    syncPopup = updateLabel;
     updateLabel();
     popup.append(label, done);
   }
