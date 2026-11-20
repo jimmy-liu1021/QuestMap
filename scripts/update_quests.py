@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+from math import asin, cos, degrees, radians, sin
 from pathlib import Path
 
 from convert_data import number
@@ -38,18 +39,74 @@ def update(path, body):
     return "updated", len(records)
 
 
+def read_area(path):
+    config = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(config, dict) or not isinstance(config.get("areas"), list) or len(config["areas"]) != 1:
+        raise ProbeError("expected_one_area")
+    area = config["areas"][0]
+    if not isinstance(area, dict):
+        raise ProbeError("invalid_area")
+    lat = number(area.get("latitude"), 90)
+    lng = number(area.get("longitude"), 180)
+    radius = number(area.get("radius_km"), 100)
+    if lat is None or lng is None or radius is None or radius <= 0 or abs(lat) + degrees(radius / 6371) >= 90:
+        raise ProbeError("invalid_area")
+    return {"latitude": lat, "longitude": lng}, radius
+
+
+def covers_circle(bounds, location, radius):
+    lat, lng = location["latitude"], location["longitude"]
+    angle = radius / 6371
+    dy = degrees(angle)
+    dx = degrees(asin(sin(angle) / cos(radians(lat))))
+    north, east, south, west = bounds
+    return south <= lat - dy and lat + dy <= north and west <= lng - dx and lng + dx <= east
+
+
+def filter_area(body, location, radius):
+    latitude = radians(location["latitude"])
+    longitude = location["longitude"]
+    limit = sin(radius / (2 * 6371)) ** 2
+    records = []
+    for row in normalize(body):
+        lat = radians(float(row["c"]))
+        lng = radians(float(row["d"]) - longitude)
+        if sin((lat - latitude) / 2) ** 2 + cos(latitude) * cos(lat) * sin(lng / 2) ** 2 <= limit:
+            records.append(row)
+    return json.dumps({"fp": records}).encode()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[1] / "data/quests.json")
+    parser.add_argument("--area-config", type=Path)
+    parser.add_argument("--probe-only", action="store_true")
     args = parser.parse_args()
     args.headed, args.zoom_once, args.wait_seconds = False, False, 15
+    try:
+        if args.area_config:
+            args.location, radius = read_area(args.area_config)
+    except (OSError, ValueError, ProbeError):
+        print("Update failed: invalid_area_config")
+        return 1
     candidates = []
     report = run(args, on_valid=candidates.append)
     if report["outcome"] != "valid_quests" or not candidates:
         print("Update failed:", report["outcome"])
         return 1
     try:
-        outcome, count = update(args.output, candidates[0])
+        body = candidates[0]
+        if args.area_config:
+            covered = covers_circle(report["bounds"], args.location, radius)
+            body = filter_area(body, args.location, radius)
+            count = len(json.loads(body)["fp"])
+            print(f"Bounds (north/east/south/west): {report['bounds']}")
+            print(f"Radius: {radius:g} km; valid unique rows in radius: {count}; covered: {covered}")
+            if not args.probe_only and not covered:
+                raise ProbeError("area_coverage_incomplete")
+        if args.probe_only:
+            return 0
+        outcome, count = update(args.output, body)
     except ProbeError as error:
         print("Update failed:", error)
         return 1

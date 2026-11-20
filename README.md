@@ -97,10 +97,10 @@ python scripts/update_quests.py
 
 1. 確認站方允許每天執行及公開再散布，然後把原始碼、`dist/index.html` 和工作流程提交到預設分支。原始擷取檔及含本機快照的 `dist/local.html` 留在本機。
 2. 在 **Settings → Pages → Build and deployment** 選 **GitHub Actions**。確認儲存庫政策允許工作流程的 token 寫入內容，並檢查預設分支規則是否允許 bot 直接提交資料。
-3. 在 **Settings → Secrets and variables → Actions → Variables** 將 `QUEST_AUTO_UPDATE_ENABLED` 設為 `true`。此流程不需要站方憑證或 `QUEST_API_URL`。未開啟時，手動與排程工作均會略過。
-4. 從 **Actions → Update quest snapshot → Run workflow** 選預設分支。確認成功後，從 GitHub Pages 網址檢查地圖及 `data/quests.json`。之後每天台灣時間 00:30 觸發，GitHub 可能延後執行。[GitHub Actions 排程語法](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax?s=09#onschedule) · [GitHub Pages Actions 部署](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
+3. 在 **Actions → Update quest snapshot → Run workflow** 選含變更的分支，保留 publish 未勾選，無需變數即可唯讀試跑。日誌會列出查詢矩形、圈內筆數及覆蓋判定。
+4. 確認站方允許後，將 QUEST_AUTO_UPDATE_ENABLED 設為 true 可開啟每日台灣時間 00:30 的唯讀探測。手動勾選 publish 需在預設分支，且單一視窗必須包住設定圓；鳳山 10 公里目前無法通過。
 
-資料有變動才提交；每次成功執行都以單檔地圖和快照發布 Pages，讓先前部署失敗時可以重新發布。擷取或驗證失敗時工作顯示失敗，現有 Git 快照和 Pages 網站保留。地圖優先讀取 `./data/quests.json`，遇到 404 時支援舊版同層 `quests.json`，快照請求使用 `no-store`。最後更新時間以台灣時間顯示，快照超過 48 小時時會提醒，仍繼續使用資料。
+唯讀探測不提交或發布。手動發布通過覆蓋驗證後，資料有變動才提交，並部署單檔地圖和快照。擷取或驗證失敗時工作顯示失敗，現有 Git 快照和 Pages 網站保留。地圖優先讀取 `./data/quests.json`，遇到 404 時支援舊版同層 `quests.json`，快照請求使用 `no-store`。最後更新時間以台灣時間顯示，快照超過 48 小時時會提醒，仍繼續使用資料。
 
 來源頁初始化、資料範圍、欄位格式、速率限制和授權都可能變動。若來源的預設地圖範圍改變，通過欄位驗證也可能得到不同覆蓋範圍。分支規則禁止 bot push 時，部署工作會停在提交步驟。
 

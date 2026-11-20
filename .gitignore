@@ -4,6 +4,7 @@ dist/local.html
 headers.txt
 response.bin
 response.latest.json
+data/quests.fengshan.local.json
 *.har
 *.bin
 .env

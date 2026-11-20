@@ -1,0 +1,11 @@
+
+{
+  "areas": [
+    {
+      "name": "高雄鳳山",
+      "latitude": 22.625,
+      "longitude": 120.35,
+      "radius_km": 10
+    }
+  ]
+}

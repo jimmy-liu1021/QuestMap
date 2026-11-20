@@ -1,4 +1,4 @@
-param([switch]$LocalSnapshot)
+param([switch]$LocalSnapshot, [string]$SnapshotPath)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -12,7 +12,8 @@ foreach ($module in 'parser', 'filters', 'map', 'app') {
 [void][IO.Directory]::CreateDirectory("$root/dist")
 [IO.File]::WriteAllText("$root/dist/index.html", $html, [Text.UTF8Encoding]::new($false))
 if ($LocalSnapshot) {
-    $snapshot = [IO.File]::ReadAllText("$root/quests.json")
+    if (-not $SnapshotPath) { $SnapshotPath = "$root/quests.json" }
+    $snapshot = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $SnapshotPath).ProviderPath)
     $snapshot = $snapshot.Replace('<', '\u003c')
     $tag = '<script id="quest-snapshot" type="application/json">' + $snapshot + '</script>'
     $localHtml = $html.Replace('<script>' + "`n" + '(() => {', $tag + "`n<script>`n(() => {")

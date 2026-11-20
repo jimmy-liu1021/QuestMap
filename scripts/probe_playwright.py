@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from time import monotonic
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from diagnose_api import classify
 from probe_api import MAX_BYTES, ProbeError, validate
@@ -23,6 +23,17 @@ ZOOM = '.leaflet-control-zoom-in, button[aria-label="Zoom in"], button[title="Zo
 def is_quest(url):
     parsed = urlsplit(url)
     return parsed.hostname == "twpkinfo.com" and parsed.path.lower() == "/getquest.ashx"
+
+
+def quest_bounds(url):
+    query = parse_qs(urlsplit(url).query)
+    try:
+        north, east, south, west = (float(query[key][0]) for key in "abcd")
+    except (KeyError, ValueError):
+        return None
+    if -90 <= south < north <= 90 and -180 <= west < east <= 180:
+        return north, east, south, west
+    return None
 
 
 def analyze(response, on_valid=None):
@@ -56,7 +67,10 @@ def analyze(response, on_valid=None):
 
 
 def observe(browser, options, timeout_error, browser_error, report, on_valid):
-    context = browser.new_context()
+    location = getattr(options, "location", None)
+    context = browser.new_context(
+        geolocation=location, permissions=["geolocation"], locale="zh-TW", timezone_id="Asia/Taipei"
+    ) if location else browser.new_context()
     try:
         page = context.new_page()
         finished = []
@@ -106,9 +120,17 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
                     quest_response = finished.pop(0).response()
                     if quest_response is None:
                         continue
+                    if location:
+                        bounds = quest_bounds(quest_response.url)
+                        if bounds is None:
+                            continue
+                        north, east, south, west = bounds
+                        if not (south <= location["latitude"] <= north and west <= location["longitude"] <= east):
+                            continue
+                        report["bounds"] = bounds
                     result = analyze(quest_response, on_valid)
                     report["responses"].append(result)
-                    if result["valid_rows"]:
+                    if result["valid_rows"] and (not location or result["outcome"] == "valid_quests"):
                         return "valid_quests"
                 page.wait_for_timeout(250)
         if report["responses"]:
