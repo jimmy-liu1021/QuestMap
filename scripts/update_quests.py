@@ -82,7 +82,7 @@ def main():
     parser.add_argument("--area-config", type=Path)
     parser.add_argument("--probe-only", action="store_true")
     args = parser.parse_args()
-    args.headed, args.zoom_once, args.wait_seconds = False, False, 15
+    args.headed, args.zoom_once, args.wait_seconds = False, False, 30 if args.area_config else 15
     try:
         if args.area_config:
             args.location, radius = read_area(args.area_config)
@@ -91,6 +91,8 @@ def main():
         return 1
     candidates = []
     report = run(args, on_valid=candidates.append)
+    if args.area_config:
+        print("Playwright summary:", json.dumps(report, sort_keys=True))
     if report["outcome"] != "valid_quests" or not candidates:
         print("Update failed:", report["outcome"])
         return 1

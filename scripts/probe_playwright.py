@@ -77,6 +77,19 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
         blocked = []
         failed = []
         report["responses"] = []
+        report["quest_requests"] = 0
+        report["failed_script_requests"] = 0
+        report["page_errors"] = 0
+        report["off_target_responses"] = []
+        report["unusable_bounds_responses"] = []
+        report["failed_quest_requests"] = []
+
+        def on_request(request):
+            if is_quest(request.url):
+                report["quest_requests"] += 1
+
+        def on_page_error(_error):
+            report["page_errors"] += 1
 
         def on_response(response):
             if is_quest(response.url) and response.status in ACCESS_STATUSES:
@@ -89,7 +102,16 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
         def on_failed(request):
             if is_quest(request.url):
                 failed.append(True)
+                reason = request.failure or ""
+                safe_reasons = {"net::ERR_ABORTED", "net::ERR_TIMED_OUT", "net::ERR_NAME_NOT_RESOLVED",
+                                "net::ERR_CONNECTION_RESET", "net::ERR_CONNECTION_REFUSED",
+                                "net::ERR_BLOCKED_BY_CLIENT", "net::ERR_FAILED"}
+                report["failed_quest_requests"].append(reason if reason in safe_reasons else "other")
+            elif request.resource_type == "script":
+                report["failed_script_requests"] += 1
 
+        page.on("request", on_request)
+        page.on("pageerror", on_page_error)
         page.on("response", on_response)
         page.on("requestfinished", on_finished)
         page.on("requestfailed", on_failed)
@@ -123,9 +145,13 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
                     if location:
                         bounds = quest_bounds(quest_response.url)
                         if bounds is None:
+                            report["unusable_bounds_responses"].append(quest_response.status)
                             continue
                         north, east, south, west = bounds
                         if not (south <= location["latitude"] <= north and west <= location["longitude"] <= east):
+                            report["off_target_responses"].append(
+                                {"http_status": quest_response.status, "bounds": bounds}
+                            )
                             continue
                         report["bounds"] = bounds
                     result = analyze(quest_response, on_valid)
@@ -133,9 +159,19 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
                     if result["valid_rows"] and (not location or result["outcome"] == "valid_quests"):
                         return "valid_quests"
                 page.wait_for_timeout(250)
+        if location:
+            report["geolocation_permission"] = page.evaluate(
+                "() => navigator.permissions.query({name: 'geolocation'}).then(result => result.state, () => 'unknown')"
+            )
         if report["responses"]:
             return "no_valid_quests"
-        return "quest_request_failed" if failed else "quest_response_not_observed"
+        if report["off_target_responses"]:
+            return "target_area_response_not_observed"
+        if report["unusable_bounds_responses"]:
+            return "quest_bounds_not_observed"
+        if failed:
+            return "quest_request_failed"
+        return "quest_response_not_observed" if report["quest_requests"] else "quest_request_not_observed"
     except timeout_error:
         return "navigation_timeout" if report["stage"] == "navigation" else "observation_timeout"
     except browser_error:

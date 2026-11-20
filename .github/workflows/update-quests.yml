@@ -40,12 +40,12 @@ jobs:
         run: |
           python -m pip install playwright==1.65.2
           python -m playwright install --with-deps chromium
+      - name: Probe configured area (read only)
+        if: ${{ env.PUBLISH != 'true' }}
+        run: python scripts/update_quests.py --area-config config/area.json --probe-only
       - name: Update and package snapshot
+        if: ${{ env.PUBLISH == 'true' }}
         run: |
-          if [ "$PUBLISH" != "true" ]; then
-            python scripts/update_quests.py --area-config config/area.json --probe-only
-            exit $?
-          fi
           python scripts/update_quests.py --area-config config/area.json
           mkdir -p _site/data
           cp dist/index.html _site/index.html
