@@ -1,0 +1,146 @@
+(() => {
+  const byId = id => document.getElementById(id);
+  const input = byId('files');
+  const search = byId('search');
+  const tasks = new Set();
+  const rewards = new Set();
+  const report = message => { byId('map-status').textContent = message; };
+  const map = createQuestMap(byId('map'), byId('locate'), report, coords => {
+    center = coords;
+    refresh(true);
+  });
+  let records = [];
+  let matching = [];
+  let filterTimer;
+  let center = null;
+
+  function refresh(fit = false) {
+    const inRange = center ? QuestFilters.nearby(matching, center, 5) : matching;
+    const visible = QuestFilters.apply(inRange, search.value, tasks, rewards);
+    byId('count').textContent = visible.length.toLocaleString('zh-TW');
+    byId('range').textContent = center ? '附近 5 公里' : '全部範圍';
+    map?.render(visible, fit, center);
+    byId('empty').hidden = visible.length > 0;
+    byId('empty').textContent = center && !inRange.length ? '附近 5 公里沒有符合的任務' :
+      matching.length ? '沒有符合條件的補給站' :
+      records.length ? '資料中沒有符合指定任務與獎勵的補給站' : '匯入任務 JSON 以顯示補給站';
+  }
+
+  function options(kind, target, selected) {
+    const choices = QuestFilters.categories(matching, kind);
+    const keys = new Set(choices.map(([key]) => key));
+    for (const key of selected) if (!keys.has(key)) selected.delete(key);
+    const nodes = choices.map(([key, caption]) => {
+      const label = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = selected.has(key);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(key);
+        else selected.delete(key);
+        refresh();
+      });
+      label.append(checkbox, document.createTextNode(caption));
+      return label;
+    });
+    target.replaceChildren(...nodes);
+  }
+
+  function refreshData(fit) {
+    matching = QuestFilters.matchingQuest(records);
+    options('task', byId('tasks'), tasks);
+    options('reward', byId('rewards'), rewards);
+    refresh(fit);
+  }
+
+  search.addEventListener('input', () => {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(refresh, 150);
+  });
+  byId('clear').addEventListener('click', () => {
+    search.value = '';
+    tasks.clear();
+    rewards.clear();
+    document.querySelectorAll('#filters input[type=checkbox]').forEach(box => { box.checked = false; });
+    refresh();
+  });
+  byId('fit').addEventListener('click', () => {
+    center = null;
+    report('');
+    refresh(true);
+  });
+  byId('import').addEventListener('click', () => input.click());
+
+  input.addEventListener('change', async () => {
+    const files = Array.from(input.files);
+    input.value = '';
+    if (!files.length) return;
+    byId('import').disabled = true;
+    byId('import-status').textContent = '正在匯入…';
+    let invalid = 0;
+    let duplicates = 0;
+    let successes = 0;
+    const failures = [];
+    for (const file of files) {
+      try {
+        const parsed = QuestParser.parse(JSON.parse((await file.text()).replace(/^\uFEFF/, '')));
+        const merged = QuestParser.merge(records, parsed.records);
+        records = merged.records;
+        invalid += parsed.invalid;
+        duplicates += merged.duplicates;
+        successes++;
+      } catch (error) {
+        failures.push(file.name + '（' + error.message + '）');
+      }
+    }
+    refreshData(successes > 0);
+    const message = ['匯入 ' + successes + '/' + files.length + ' 個檔案'];
+    if (invalid) message.push('略過 ' + invalid + ' 筆無效座標');
+    if (duplicates) message.push('合併 ' + duplicates + ' 筆重複資料');
+    if (failures.length) message.push('讀取失敗 ' + failures.join('、'));
+    byId('import-status').textContent = message.join('，');
+    byId('import').disabled = false;
+  });
+
+  refresh();
+  function showSnapshotTime(value) {
+    const time = typeof value === 'string' ? Date.parse(value) : NaN;
+    const status = byId('snapshot-status');
+    if (!Number.isFinite(time) || time < 0) {
+      status.textContent = '這份快照未記錄最後更新時間';
+      return;
+    }
+    const stale = Date.now() - time > 48 * 60 * 60 * 1000;
+    status.textContent = '最後更新 ' + QuestParser.parseDate(Math.floor(time / 1000)) +
+      '（台灣時間）' + (stale ? ' · 資料已超過 48 小時' : '');
+    status.classList.toggle('stale', stale);
+  }
+
+  async function loadSnapshot() {
+    try {
+      const inline = byId('quest-snapshot');
+      let raw;
+      if (inline) {
+        raw = JSON.parse(inline.textContent);
+      } else {
+        if (!['https:', 'http:'].includes(location.protocol)) return;
+        const options = { cache: 'no-store', redirect: 'error' };
+        let response = await fetch('./data/quests.json', options);
+        if (response.status === 404) response = await fetch('./quests.json', options);
+        if (!response.ok) return;
+        raw = await response.json();
+      }
+      const parsed = QuestParser.parse(raw);
+      const bundled = QuestParser.merge([], parsed.records).records;
+      records = QuestParser.merge(bundled, records).records;
+      refreshData(true);
+      showSnapshotTime(raw.updated_at);
+      byId('import-status').textContent = '已載入任務快照';
+      map?.locateUser();
+    } catch {
+      byId('import-status').textContent = '任務快照無法載入，可手動匯入';
+    }
+  }
+  loadSnapshot();
+})();
+

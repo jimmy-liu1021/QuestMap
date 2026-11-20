@@ -1,0 +1,13 @@
+**/quests.json
+!/data/quests.json
+dist/local.html
+headers.txt
+response.bin
+response.latest.json
+*.har
+*.bin
+.env
+.env.*
+__pycache__/
+.browser-test/
+

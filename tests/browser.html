@@ -1,0 +1,175 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Quest Map tests</title>
+<style>iframe { width: 320px; height: 640px; border: 0; } .pass { color: green; } .fail { color: red; }</style>
+<h1>Quest Map tests</h1>
+<ol id="results"></ol>
+<div id="summary">RUNNING</div>
+<script src="../js/parser.js"></script>
+<script src="../js/filters.js"></script>
+<script>
+const results = document.querySelector('#results');
+let passes = 0;
+let failures = 0;
+function check(name, result) {
+  const item = document.createElement('li');
+  item.className = result ? 'pass' : 'fail';
+  item.textContent = (result ? 'PASS ' : 'FAIL ') + name;
+  results.append(item);
+  if (result) passes++;
+  else failures++;
+}
+const first = { a: 'test', b: '鳳山代天府', c: '22.627163', d: '120.372011',
+  e: '16^1^8^0^^^^^Excellent', f: '4^890^^25^N^^^N', g: '1795115394' };
+const second = { ...first, a: 'another', b: '美泰宮', e: '4^5^3^0^^^^^', f: '2^^701^3^N^^^N' };
+const parsed = QuestParser.parse({ fp: [first, second, null, { c: ' ', d: 120 }, { c: 91, d: 0 }] });
+const [known, unknown] = parsed.records;
+check('Unicode, numeric coordinates', known.name === first.b && known.lat === 22.627163 && known.lng === 120.372011);
+check('Exact mapping, split code including empty fields', known.task.label === '投出1次Excellent' &&
+  known.task.parts.length === 9 && known.reward.parts[2] === '' && known.reward.label === '獲得糖果25顆(無極汰那)');
+check('Unknown raw code retained', unknown.task.label === second.e && unknown.reward.label === second.f);
+check('Asia/Taipei timestamp', QuestParser.parseDate(known.timestamp) === '2026/11/20 03:09:54');
+check('Skips malformed data', parsed.invalid === 3);
+let rejected = false;
+try { QuestParser.parse({ fp: {} }); } catch { rejected = true; }
+check('Rejects invalid document', rejected);
+const newest = { ...known, timestamp: known.timestamp + 100 };
+const merged = QuestParser.merge([known], [newest, known, unknown]);
+check('Merges and keeps newest', merged.duplicates === 2 && merged.records[0] === newest);
+const tasks = new Set([known.task.key, unknown.task.key]);
+const rewards = new Set([unknown.reward.key]);
+check('Search + OR within task + AND with reward', QuestFilters.apply(parsed.records, ' 美泰 ', tasks, rewards)[0] === unknown &&
+  QuestFilters.apply(parsed.records, '鳳山', tasks, rewards).length === 0);
+check('Unknown task selectable', QuestFilters.categories(parsed.records, 'task').some(([key]) => key === unknown.task.key));
+const variants = QuestParser.parse({ fp: [first,
+  { ...first, e: '16^2^8^0^^^^^Excellent' },
+  { ...first, f: '4^890^^24^N^^^N' },
+  second
+] }).records;
+check('Both complete raw codes must match',
+  QuestFilters.matchingQuest(variants).length === 1 &&
+  QuestFilters.matchingQuest(variants)[0] === variants[0]);
+
+const large = Array.from({ length: 15000 }, (_, index) => ({
+  ...first, a: 'large-' + index, b: '批次 ' + index,
+  c: 22.5 + (index % 200) / 1000, d: 120.3 + Math.floor(index / 200) / 1000,
+}));
+const largeRecords = QuestParser.merge([], QuestParser.parse({ fp: large }).records).records;
+check('15,000 records parse and filter', largeRecords.length === 15000 &&
+  QuestFilters.apply(largeRecords, '批次 14999', new Set(), new Set()).length === 1);
+
+function until(condition, timeout = 12000) {
+  const deadline = Date.now() + timeout;
+  return new Promise(resolve => {
+    const timer = setInterval(() => {
+      if (condition() || Date.now() > deadline) {
+        clearInterval(timer);
+        resolve(Boolean(condition()));
+      }
+    }, 50);
+  });
+}
+
+async function localFixture() {
+  try {
+    const response = await fetch('../quests.json');
+    return response.ok ? await response.text() : null;
+  } catch {
+    return null;
+  }
+}
+
+const frame = document.createElement('iframe');
+frame.src = '../dist/index.html';
+frame.onload = async () => {
+  try {
+    const doc = frame.contentDocument;
+    const id = name => doc.getElementById(name);
+    const input = id('files');
+    const list = new DataTransfer();
+    for (const [name, contents] of [
+      ['first.json', JSON.stringify({ fp: [first, null, ...large] })],
+      ['second.json', JSON.stringify({ fp: [first, second] })],
+      ['bad.json', '{']
+    ]) list.items.add(new File([contents], name, { type: 'application/json' }));
+    input.files = list.files;
+    input.dispatchEvent(new Event('change'));
+    const imported = await until(() => !id('import').disabled);
+    check('Multiple file import, invalid row and invalid file', imported &&
+      id('count').textContent === '15,001' &&
+      id('import-status').textContent.includes('bad.json') &&
+      id('import-status').textContent.includes('重複'));
+    const leaflet = Boolean(frame.contentWindow.L?.markerClusterGroup);
+    check('Leaflet and marker clustering loaded', leaflet);
+    if (leaflet) {
+      const tileImages = () => [...doc.querySelectorAll('#map img.leaflet-tile')];
+      const loaded = await until(() => tileImages().some(tile => tile.complete && tile.naturalWidth > 0));
+      check('Taiwan WMTS basemap loads with the correct attribution', loaded &&
+        tileImages().every(tile => new URL(tile.src).hostname === 'wmts.nlsc.gov.tw') &&
+        doc.querySelector('.leaflet-control-attribution').textContent.includes('內政部國土測繪中心'));
+    }
+    if (leaflet) check('Clusters render for a large import', await until(() => doc.querySelector('.marker-cluster')));
+    id('filters').open = true;
+    check('320px expanded filters and map remain in viewport', doc.documentElement.scrollWidth <= 320 &&
+      id('map').getBoundingClientRect().height > 220);
+    id('search').value = '鳳山';
+    id('search').dispatchEvent(new Event('input'));
+    check('Interactive search after large import', await until(() => id('count').textContent === '1'));
+    id('fit').click();
+    const pin = () => doc.querySelector('.quest-pin[title="鳳山代天府"]');
+    if (leaflet && await until(pin)) {
+      pin().dispatchEvent(new MouseEvent('click', { bubbles: true, view: frame.contentWindow,
+        clientX: pin().getBoundingClientRect().x + 12, clientY: pin().getBoundingClientRect().y + 12 }));
+      const popup = doc.querySelector('.leaflet-popup');
+      check('Marker popup and navigation', popup?.textContent.includes('鳳山代天府') &&
+        popup.textContent.includes('投出1次Excellent') &&
+        popup.textContent.includes('獲得糖果25顆(無極汰那)') &&
+        popup.querySelector('.directions')?.href.includes('destination=22.627163,120.372011'));
+    } else check('Marker popup and navigation', false);
+    id('clear').click();
+    check('Clear resets secondary filters and keeps the exact code pair',
+      id('count').textContent === '15,001');
+    const fixture = await localFixture();
+    if (fixture) {
+      const before = QuestParser.merge([], QuestParser.parse(JSON.parse(fixture)).records).records;
+      const combined = QuestParser.merge(
+        QuestParser.merge(largeRecords, parsed.records).records, before
+      ).records;
+      const expected = QuestFilters.matchingQuest(combined).length.toLocaleString('zh-TW');
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([fixture], 'quests.json', { type: 'application/json' }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change'));
+      check('Workspace quests.json imports through file picker input',
+        await until(() => !id('import').disabled) &&
+        id('count').textContent === expected && id('import-status').textContent.includes('1/1'));
+
+      const local = await fetch('../dist/local.html').catch(() => null);
+      if (local?.ok) {
+        const matches = QuestFilters.matchingQuest(before);
+        const origin = { latitude: matches[0].lat, longitude: matches[0].lng };
+        const nearbyCount = QuestFilters.nearby(matches, origin, 5).length;
+        const mock = '<script>Object.defineProperty(navigator, "geolocation", { value: {' +
+          'getCurrentPosition(success) { success({ coords: ' + JSON.stringify(origin) +
+          ' }); } } });</' + 'script>';
+        const nearbyFrame = document.createElement('iframe');
+        nearbyFrame.srcdoc = (await local.text()).replace('<head>', '<head>' + mock);
+        document.body.append(nearbyFrame);
+        const nearbyDoc = name => nearbyFrame.contentDocument?.getElementById(name);
+        const located = await until(() => nearbyDoc('range')?.textContent === '附近 5 公里');
+        check('Embedded snapshot automatically shows nearby quests after location permission',
+          located && nearbyDoc('count').textContent === nearbyCount.toLocaleString('zh-TW'));
+        nearbyDoc('fit')?.click();
+        check('Show all removes the distance restriction',
+          nearbyDoc('count')?.textContent === matches.length.toLocaleString('zh-TW'));
+      }
+    }
+  } catch (error) {
+    check(error.message, false);
+  } finally {
+    document.querySelector('#summary').textContent = passes + ' passed; ' + failures + ' failed';
+  }
+};
+document.body.append(frame);
+</script>
+
