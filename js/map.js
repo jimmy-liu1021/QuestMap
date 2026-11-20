@@ -19,6 +19,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   const cluster = L.markerClusterGroup({ removeOutsideVisibleBounds: true });
   cluster.addTo(map);
   const routeLine = L.polyline([], { color: '#2355b5', weight: 4, dashArray: '7 8', interactive: false }).addTo(map);
+  const routeNumbers = L.layerGroup().addTo(map);
   const icon = L.divIcon({ className: 'quest-pin', iconSize: [24, 24], iconAnchor: [12, 12] });
 
   function popup(record) {
@@ -130,10 +131,23 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (records.length) requestAnimationFrame(addBatch);
   }
 
+  let numberedStops;
   function showRoute(stops, origin) {
     const points = stops.map(stop => [stop.lat, stop.lng]);
     if (points.length && origin) points.unshift([origin.lat, origin.lng]);
     routeLine.setLatLngs(points);
+    if (numberedStops === stops) return;
+    numberedStops = stops;
+    routeNumbers.clearLayers();
+    stops.forEach((stop, index) => {
+      const label = L.divIcon({
+        className: 'route-stop-number', html: String(index + 1),
+        iconSize: [26, 26], iconAnchor: [4, 32]
+      });
+      L.marker([stop.lat, stop.lng], {
+        icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
+      }).addTo(routeNumbers);
+    });
   }
   return { render, locateUser, stopFollowing, showRoute };
 }

@@ -122,6 +122,17 @@ legend { font-size: .875rem; font-weight: 650; }
 }
 #map-status { top: auto; bottom: calc(1.75rem + env(safe-area-inset-bottom)); max-width: 65%; }
 .quest-pin { background: #236448; border: 3px solid white; border-radius: 50%; box-shadow: 0 2px 5px #0006; }
+.route-stop-number {
+  display: grid;
+  place-items: center;
+  background: #2355b5;
+  color: white;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px #0005;
+  font: 700 12px/1 system-ui, sans-serif;
+  pointer-events: none;
+}
 .leaflet-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .leaflet-right { padding-right: env(safe-area-inset-right); }
 .leaflet-control-zoom a { width: 44px !important; height: 44px !important; line-height: 44px !important; }
@@ -378,6 +389,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   const cluster = L.markerClusterGroup({ removeOutsideVisibleBounds: true });
   cluster.addTo(map);
   const routeLine = L.polyline([], { color: '#2355b5', weight: 4, dashArray: '7 8', interactive: false }).addTo(map);
+  const routeNumbers = L.layerGroup().addTo(map);
   const icon = L.divIcon({ className: 'quest-pin', iconSize: [24, 24], iconAnchor: [12, 12] });
 
   function popup(record) {
@@ -489,10 +501,23 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     if (records.length) requestAnimationFrame(addBatch);
   }
 
+  let numberedStops;
   function showRoute(stops, origin) {
     const points = stops.map(stop => [stop.lat, stop.lng]);
     if (points.length && origin) points.unshift([origin.lat, origin.lng]);
     routeLine.setLatLngs(points);
+    if (numberedStops === stops) return;
+    numberedStops = stops;
+    routeNumbers.clearLayers();
+    stops.forEach((stop, index) => {
+      const label = L.divIcon({
+        className: 'route-stop-number', html: String(index + 1),
+        iconSize: [26, 26], iconAnchor: [4, 32]
+      });
+      L.marker([stop.lat, stop.lng], {
+        icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
+      }).addTo(routeNumbers);
+    });
   }
   return { render, locateUser, stopFollowing, showRoute };
 }

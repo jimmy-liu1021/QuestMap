@@ -140,9 +140,12 @@ frame.onload = async () => {
       check('Station selection adds a walking navigation stop',
         id('trip-stops').textContent.includes('鳳山代天府') &&
         id('trip-links').querySelector('a').href.includes('travelmode=walking'));
+      check('Selected station is numbered on the map',
+        doc.querySelector('.route-stop-number')?.textContent === '1');
       id('trip-stops').querySelector('button').click();
       check('Finishing a station hides it and removes it from the route',
-        id('count').textContent === '0' && !id('trip-stops').children.length);
+        id('count').textContent === '0' && !id('trip-stops').children.length &&
+        !doc.querySelector('.route-stop-number'));
       id('show-completed').click();
       check('Completed stations can be shown again', id('count').textContent === '1');
       await until(pin);
