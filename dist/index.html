@@ -133,6 +133,16 @@ legend { font-size: .875rem; font-weight: 650; }
   font: 700 12px/1 system-ui, sans-serif;
   pointer-events: none;
 }
+.route-start-label {
+  display: grid;
+  place-items: center;
+  color: white;
+  background: #123c32;
+  border: 2px solid white;
+  border-radius: .5rem;
+  font: 700 12px/1 system-ui, sans-serif;
+  pointer-events: none;
+}
 .leaflet-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .leaflet-right { padding-right: env(safe-area-inset-right); }
 .leaflet-control-zoom a { width: 44px !important; height: 44px !important; line-height: 44px !important; }
@@ -174,6 +184,7 @@ legend { font-size: .875rem; font-weight: 650; }
           <p id="trip-hint">點選地圖站點加入路線。</p>
           <ol id="trip-stops"></ol>
           <div id="trip-links"></div>
+          <button type="button" id="end-trip" hidden>結束路線</button>
           <label class="finished-toggle"><input type="checkbox" id="show-completed">顯示已完成任務 <span id="completed-count"></span></label>
         </div>
       </details>
@@ -321,6 +332,8 @@ const QuestFilters = (() => {
 </script>
   <script>
 const QuestRoute = (() => {
+  const MAX_STOPS = 16;
+
   function distance(from, to) {
     const rad = Math.PI / 180;
     const h = Math.sin((to.lat - from.lat) * rad / 2) ** 2 +
@@ -329,42 +342,82 @@ const QuestRoute = (() => {
     return 12742 * Math.asin(Math.sqrt(Math.min(1, h)));
   }
 
-  function order(stops, position) {
-    const pending = [...stops];
-    const ordered = [];
-    let last = position || pending.shift();
-    if (!position && last) ordered.push(last);
-    while (pending.length) {
-      let nearest = 0;
-      let best = Infinity;
-      pending.forEach((stop, index) => {
-        const km = distance(last, stop);
-        if (km < best) {
-          nearest = index;
-          best = km;
+  function order(stops, start, finish = start) {
+    const nodes = [...stops];
+    const count = nodes.length;
+    if (!count) return [];
+    if (count > MAX_STOPS) throw new RangeError('Too many route stops');
+    start ??= nodes[0];
+    finish ??= start;
+    const edge = nodes.map(from => nodes.map(to => distance(from, to)));
+    const endCost = nodes.map(from => distance(from, finish));
+    const masks = 1 << count;
+    const cost = new Float64Array(masks * count);
+    const next = new Int8Array(masks * count);
+
+    // Each state is the cheapest path from one stop through the rest of the mask, then back to finish.
+    for (let mask = 1; mask < masks; mask++) {
+      for (let bits = mask; bits; bits &= bits - 1) {
+        const bit = bits & -bits;
+        const stop = 31 - Math.clz32(bit);
+        const rest = mask ^ bit;
+        const state = mask * count + stop;
+        let best = endCost[stop];
+        let choice = -1;
+        if (rest) {
+          best = Infinity;
+          for (let remaining = rest; remaining; remaining &= remaining - 1) {
+            const candidate = 31 - Math.clz32(remaining & -remaining);
+            const km = edge[stop][candidate] + cost[rest * count + candidate];
+            if (km < best) {
+              best = km;
+              choice = candidate;
+            }
+          }
         }
-      });
-      [last] = pending.splice(nearest, 1);
-      ordered.push(last);
+        cost[state] = best;
+        next[state] = choice;
+      }
+    }
+    let mask = masks - 1;
+    let current = 0;
+    let best = Infinity;
+    nodes.forEach((stop, index) => {
+      const km = distance(start, stop) + cost[mask * count + index];
+      if (km < best) {
+        best = km;
+        current = index;
+      }
+    });
+    const ordered = [];
+    while (current >= 0) {
+      ordered.push(nodes[current]);
+      const following = next[mask * count + current];
+      mask ^= 1 << current;
+      current = following;
     }
     return ordered;
   }
 
-  function directions(stops) {
+  function directions(stops, start, finish) {
     const point = stop => stop.lat + ',' + stop.lng;
+    const destinations = [...stops];
+    if (finish) destinations.push(finish);
+    if (start && destinations.length && point(start) === point(destinations[0])) destinations.shift();
     const links = [];
-    for (let offset = 0; offset < stops.length; offset += 4) {
-      const segment = stops.slice(offset, offset + 4);
+    for (let offset = 0; offset < destinations.length; offset += 4) {
+      const segment = destinations.slice(offset, offset + 4);
       const params = new URLSearchParams({
         api: '1', travelmode: 'walking', destination: point(segment.at(-1))
       });
-      if (offset) params.set('origin', point(stops[offset - 1]));
+      const origin = offset ? destinations[offset - 1] : start;
+      if (origin) params.set('origin', point(origin));
       if (segment.length > 1) params.set('waypoints', segment.slice(0, -1).map(point).join('|'));
       links.push('https://www.google.com/maps/dir/?' + params);
     }
     return links;
   }
-  return { order, directions };
+  return { order, directions, MAX_STOPS };
 })();
 </script>
   <script>
@@ -502,12 +555,15 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   }
 
   let numberedStops;
-  function showRoute(stops, origin) {
+  let routeOrigin;
+  function showRoute(stops, origin, finish) {
     const points = stops.map(stop => [stop.lat, stop.lng]);
-    if (points.length && origin) points.unshift([origin.lat, origin.lng]);
+    if (origin) points.unshift([origin.lat, origin.lng]);
+    if (finish) points.push([finish.lat, finish.lng]);
     routeLine.setLatLngs(points);
-    if (numberedStops === stops) return;
+    if (numberedStops === stops && routeOrigin === finish) return;
     numberedStops = stops;
+    routeOrigin = finish;
     routeNumbers.clearLayers();
     stops.forEach((stop, index) => {
       const label = L.divIcon({
@@ -518,8 +574,15 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
         icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
       }).addTo(routeNumbers);
     });
+    if (finish) {
+      const label = L.divIcon({ className: 'route-start-label', html: '起點',
+        iconSize: [35, 25], iconAnchor: [40, 32] });
+      L.marker([finish.lat, finish.lng], {
+        icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
+      }).addTo(routeNumbers);
+    }
   }
-  return { render, locateUser, stopFollowing, showRoute };
+  return { render, locateUser, stopFollowing, showRoute, closePopup: () => map.closePopup() };
 }
 
 </script>
@@ -537,12 +600,12 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   let completionDay = '';
   let route = [];
   let position = null;
+  let tripOrigin = null;
+  let legStart = null;
   const report = message => { byId('map-status').textContent = message; };
   const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
     center = coords;
     position = { lat: coords.latitude, lng: coords.longitude };
-    if (first) refreshTrip();
-    else map?.showRoute(route, position);
     refresh(first);
   }, addActions);
   let records = [];
@@ -577,9 +640,11 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   }
 
   function refreshTrip() {
-    route = QuestRoute.order(selectedStops.values(), position);
+    route = QuestRoute.order(selectedStops.values(), legStart, tripOrigin);
     byId('trip-count').textContent = route.length ? '（' + route.length + ' 站）' : '';
-    byId('trip-hint').textContent = route.length ? '地圖虛線顯示站點順序。' : '點選地圖站點加入路線。';
+    byId('trip-hint').textContent = route.length ? '依直線總距離最佳化，最後回到起點。' :
+      tripOrigin ? '可導航返回起點。' : '點選地圖站點加入路線，最多 ' + QuestRoute.MAX_STOPS + ' 站。';
+    byId('end-trip').hidden = !tripOrigin;
     const list = route.map(record => {
       const item = document.createElement('li');
       item.textContent = record.name;
@@ -592,17 +657,18 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       return item;
     });
     byId('trip-stops').replaceChildren(...list);
-    const urls = QuestRoute.directions(route);
+    const urls = QuestRoute.directions(route, legStart, tripOrigin);
     byId('trip-links').replaceChildren(...urls.map((url, index) => {
       const link = document.createElement('a');
       link.href = url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.className = 'directions';
-      link.textContent = urls.length === 1 ? 'Google Maps 步行導航' : '步行導航 第 ' + (index + 1) + ' 段';
+      link.textContent = !route.length ? 'Google Maps 返回起點' :
+        urls.length === 1 ? 'Google Maps 步行導航' : '步行導航 第 ' + (index + 1) + ' 段';
       return link;
     }));
-    map?.showRoute(route, position);
+    map?.showRoute(route, legStart, tripOrigin);
   }
 
   function toggleComplete(record) {
@@ -611,7 +677,7 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
       completed.delete(record.key);
     } else {
       completed.add(record.key);
-      selectedStops.delete(record.key);
+      if (selectedStops.delete(record.key)) legStart = { lat: record.lat, lng: record.lng };
     }
     try {
       localStorage.setItem(completionKey, JSON.stringify({ day: completionDay, keys: [...completed] }));
@@ -629,8 +695,20 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     check.checked = selectedStops.has(record.key);
     check.disabled = completed.has(record.key);
     check.addEventListener('change', () => {
-      if (check.checked) selectedStops.set(record.key, record);
-      else selectedStops.delete(record.key);
+      if (check.checked) {
+        if (selectedStops.size >= QuestRoute.MAX_STOPS) {
+          check.checked = false;
+          report('每條路線最多 ' + QuestRoute.MAX_STOPS + ' 站');
+          return;
+        }
+        if (!tripOrigin) {
+          tripOrigin = position || { lat: record.lat, lng: record.lng };
+          legStart = tripOrigin;
+        }
+        selectedStops.set(record.key, record);
+      } else {
+        selectedStops.delete(record.key);
+      }
       refreshTrip();
     });
     label.append(check, document.createTextNode('加入路線'));
@@ -694,6 +772,13 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
     refresh(true);
   });
   completedToggle.addEventListener('change', () => refresh());
+  byId('end-trip').addEventListener('click', () => {
+    selectedStops.clear();
+    tripOrigin = null;
+    legStart = null;
+    map?.closePopup();
+    refreshTrip();
+  });
   window.addEventListener('pageshow', () => refresh());
   byId('import').addEventListener('click', () => input.click());
 

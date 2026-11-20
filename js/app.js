@@ -11,12 +11,12 @@
   let completionDay = '';
   let route = [];
   let position = null;
+  let tripOrigin = null;
+  let legStart = null;
   const report = message => { byId('map-status').textContent = message; };
   const map = createQuestMap(byId('map'), byId('locate'), report, (coords, first) => {
     center = coords;
     position = { lat: coords.latitude, lng: coords.longitude };
-    if (first) refreshTrip();
-    else map?.showRoute(route, position);
     refresh(first);
   }, addActions);
   let records = [];
@@ -51,9 +51,11 @@
   }
 
   function refreshTrip() {
-    route = QuestRoute.order(selectedStops.values(), position);
+    route = QuestRoute.order(selectedStops.values(), legStart, tripOrigin);
     byId('trip-count').textContent = route.length ? '（' + route.length + ' 站）' : '';
-    byId('trip-hint').textContent = route.length ? '地圖虛線顯示站點順序。' : '點選地圖站點加入路線。';
+    byId('trip-hint').textContent = route.length ? '依直線總距離最佳化，最後回到起點。' :
+      tripOrigin ? '可導航返回起點。' : '點選地圖站點加入路線，最多 ' + QuestRoute.MAX_STOPS + ' 站。';
+    byId('end-trip').hidden = !tripOrigin;
     const list = route.map(record => {
       const item = document.createElement('li');
       item.textContent = record.name;
@@ -66,17 +68,18 @@
       return item;
     });
     byId('trip-stops').replaceChildren(...list);
-    const urls = QuestRoute.directions(route);
+    const urls = QuestRoute.directions(route, legStart, tripOrigin);
     byId('trip-links').replaceChildren(...urls.map((url, index) => {
       const link = document.createElement('a');
       link.href = url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.className = 'directions';
-      link.textContent = urls.length === 1 ? 'Google Maps 步行導航' : '步行導航 第 ' + (index + 1) + ' 段';
+      link.textContent = !route.length ? 'Google Maps 返回起點' :
+        urls.length === 1 ? 'Google Maps 步行導航' : '步行導航 第 ' + (index + 1) + ' 段';
       return link;
     }));
-    map?.showRoute(route, position);
+    map?.showRoute(route, legStart, tripOrigin);
   }
 
   function toggleComplete(record) {
@@ -85,7 +88,7 @@
       completed.delete(record.key);
     } else {
       completed.add(record.key);
-      selectedStops.delete(record.key);
+      if (selectedStops.delete(record.key)) legStart = { lat: record.lat, lng: record.lng };
     }
     try {
       localStorage.setItem(completionKey, JSON.stringify({ day: completionDay, keys: [...completed] }));
@@ -103,8 +106,20 @@
     check.checked = selectedStops.has(record.key);
     check.disabled = completed.has(record.key);
     check.addEventListener('change', () => {
-      if (check.checked) selectedStops.set(record.key, record);
-      else selectedStops.delete(record.key);
+      if (check.checked) {
+        if (selectedStops.size >= QuestRoute.MAX_STOPS) {
+          check.checked = false;
+          report('每條路線最多 ' + QuestRoute.MAX_STOPS + ' 站');
+          return;
+        }
+        if (!tripOrigin) {
+          tripOrigin = position || { lat: record.lat, lng: record.lng };
+          legStart = tripOrigin;
+        }
+        selectedStops.set(record.key, record);
+      } else {
+        selectedStops.delete(record.key);
+      }
       refreshTrip();
     });
     label.append(check, document.createTextNode('加入路線'));
@@ -168,6 +183,13 @@
     refresh(true);
   });
   completedToggle.addEventListener('change', () => refresh());
+  byId('end-trip').addEventListener('click', () => {
+    selectedStops.clear();
+    tripOrigin = null;
+    legStart = null;
+    map?.closePopup();
+    refreshTrip();
+  });
   window.addEventListener('pageshow', () => refresh());
   byId('import').addEventListener('click', () => input.click());
 

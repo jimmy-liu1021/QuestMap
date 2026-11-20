@@ -119,6 +119,16 @@ legend { font-size: .875rem; font-weight: 650; }
   font: 700 12px/1 system-ui, sans-serif;
   pointer-events: none;
 }
+.route-start-label {
+  display: grid;
+  place-items: center;
+  color: white;
+  background: #123c32;
+  border: 2px solid white;
+  border-radius: .5rem;
+  font: 700 12px/1 system-ui, sans-serif;
+  pointer-events: none;
+}
 .leaflet-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .leaflet-right { padding-right: env(safe-area-inset-right); }
 .leaflet-control-zoom a { width: 44px !important; height: 44px !important; line-height: 44px !important; }

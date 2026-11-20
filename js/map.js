@@ -132,12 +132,15 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
   }
 
   let numberedStops;
-  function showRoute(stops, origin) {
+  let routeOrigin;
+  function showRoute(stops, origin, finish) {
     const points = stops.map(stop => [stop.lat, stop.lng]);
-    if (points.length && origin) points.unshift([origin.lat, origin.lng]);
+    if (origin) points.unshift([origin.lat, origin.lng]);
+    if (finish) points.push([finish.lat, finish.lng]);
     routeLine.setLatLngs(points);
-    if (numberedStops === stops) return;
+    if (numberedStops === stops && routeOrigin === finish) return;
     numberedStops = stops;
+    routeOrigin = finish;
     routeNumbers.clearLayers();
     stops.forEach((stop, index) => {
       const label = L.divIcon({
@@ -148,7 +151,14 @@ function createQuestMap(element, locate, report, onPosition, addActions) {
         icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
       }).addTo(routeNumbers);
     });
+    if (finish) {
+      const label = L.divIcon({ className: 'route-start-label', html: '起點',
+        iconSize: [35, 25], iconAnchor: [40, 32] });
+      L.marker([finish.lat, finish.lng], {
+        icon: label, interactive: false, keyboard: false, zIndexOffset: 1000
+      }).addTo(routeNumbers);
+    }
   }
-  return { render, locateUser, stopFollowing, showRoute };
+  return { render, locateUser, stopFollowing, showRoute, closePopup: () => map.closePopup() };
 }
 
