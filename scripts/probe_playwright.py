@@ -115,6 +115,7 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
                 return "browser_geolocation_preflight_failed"
         page = context.new_page()
         finished = []
+        request_times = []
         blocked = []
         failed = []
         report["responses"] = []
@@ -128,6 +129,7 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
         def on_request(request):
             if is_quest(request.url):
                 report["quest_requests"] += 1
+                request_times.append(monotonic())
 
         def on_page_error(_error):
             report["page_errors"] += 1
@@ -165,6 +167,32 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
             return "page_http_error"
 
         report["stage"] = "observation"
+        def restricted():
+            return blocked or any(locator.is_visible() for locator in page.locator(CHALLENGE).all())
+
+        def next_scan_response(before):
+            deadline = monotonic() + options.wait_seconds
+            while monotonic() < deadline:
+                if restricted():
+                    return "scan_access_restricted", None, None
+                if len(request_times) > before + 1:
+                    return "scan_unexpected_requests", None, None
+                if finished:
+                    response = finished.pop(0).response()
+                    bounds = quest_bounds(response.url) if response else None
+                    if not bounds or len(request_times) != before + 1:
+                        return "scan_invalid_bounds_or_request", None, None
+                    bodies = []
+                    result = analyze(response, bodies.append)
+                    if not bodies:
+                        report["scan_failure"] = {"bounds": bounds, **result}
+                        return result["outcome"], None, None
+                    return "valid_quests", bounds, bodies[0]
+                if failed:
+                    return "scan_request_failed", None, None
+                page.wait_for_timeout(250)
+            return "scan_response_timeout", None, None
+
         for may_zoom in (False, True) if options.zoom_once else (False,):
             if may_zoom:
                 if not page.locator(ZOOM).first.is_visible():
@@ -195,9 +223,23 @@ def observe(browser, options, timeout_error, browser_error, report, on_valid):
                             )
                             continue
                         report["bounds"] = bounds
-                    result = analyze(quest_response, on_valid)
+                    scan = getattr(options, "scan_radius", None)
+                    bodies = []
+                    result = analyze(quest_response, bodies.append if scan else on_valid)
                     report["responses"].append(result)
                     if result["valid_rows"] and (not location or result["outcome"] == "valid_quests"):
+                        if scan:
+                            from scan_area import sweep
+
+                            report["stage"] = "scan"
+                            outcome, body = sweep(page, options, report, bodies[0], bounds,
+                                                  request_times, next_scan_response, restricted)
+                            report["quest_request_intervals_seconds"] = [
+                                round(second - first, 3) for first, second in zip(request_times, request_times[1:])
+                            ]
+                            if body is not None and on_valid:
+                                on_valid(body)
+                            return outcome
                         return "valid_quests"
                 page.wait_for_timeout(250)
         if location:

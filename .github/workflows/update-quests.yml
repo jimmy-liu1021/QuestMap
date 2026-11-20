@@ -22,7 +22,7 @@ jobs:
   prepare:
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish || vars.QUEST_AUTO_UPDATE_ENABLED == 'true' && github.ref_name == github.event.repository.default_branch }}
     env:
-      PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+      PUBLISH: ${{ (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'schedule' && vars.QUEST_AREA_SCAN_ENABLED == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -42,11 +42,19 @@ jobs:
           python -m playwright install --with-deps --only-shell chromium
       - name: Probe configured area (read only)
         if: ${{ env.PUBLISH != 'true' }}
-        run: python scripts/update_quests.py --area-config config/area.json --probe-only
+        run: python scripts/update_quests.py --area-config config/area.json --probe-only --plan-output scan-plan.json
+      - name: Upload fixed-zoom scan plan
+        if: ${{ env.PUBLISH != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fixed-zoom-scan-plan
+          path: scan-plan.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Update and package snapshot
         if: ${{ env.PUBLISH == 'true' }}
         run: |
-          python scripts/update_quests.py --area-config config/area.json
+          python scripts/update_quests.py --area-config config/area.json --scan
           mkdir -p _site/data
           cp dist/index.html _site/index.html
           cp data/quests.json _site/data/quests.json
@@ -66,7 +74,7 @@ jobs:
           path: _site
 
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'schedule' && vars.QUEST_AREA_SCAN_ENABLED == 'true') }}
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 10

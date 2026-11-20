@@ -3,9 +3,14 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from math import atan, degrees, sinh
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from probe_api import ProbeError
+from plan_area_scan import circle_coverage
+from scan_area import MAX_QUEST_REQUESTS, mercator, sweep
 from update_quests import covers_circle, filter_area, read_area, update
 
 
@@ -58,6 +63,43 @@ class UpdateTests(unittest.TestCase):
         near = {**STATION, "a": "near", "c": "22.625", "d": "120.35"}
         result = json.loads(filter_area(body(STATION, near), location, radius))
         self.assertEqual([station["a"] for station in result["fp"]], ["near"])
+
+    def test_fixed_zoom_sweep_covers_circle_and_merges_valid_views(self):
+        location = {"latitude": 22.625, "longitude": 120.35}
+        options = SimpleNamespace(location=location, scan_radius=10)
+        start = (22.638055592864678, 120.37745475769043, 22.61191121828707, 120.32252311706543)
+        bounds = start
+        page = MagicMock()
+        page.locator.return_value.first.bounding_box.return_value = {
+            "x": 0, "y": 0, "width": 1280, "height": 660
+        }
+        request_times = [0, 0]
+        record = {**STATION, "c": "22.625", "d": "120.35"}
+
+        def next_response(before):
+            nonlocal bounds
+            self.assertEqual(before, len(request_times))
+            request_times.append(0)
+            start_move, end_move = page.mouse.move.call_args_list[-2:]
+            dx = end_move.args[0] - start_move.args[0]
+            dy = end_move.args[1] - start_move.args[1]
+            n, e, s, w = bounds
+            shift_y = (mercator(n) - mercator(s)) * dy / 660
+            shift_x = (e - w) * dx / 1280
+            bounds = (degrees(atan(sinh(mercator(n) + shift_y))), e - shift_x,
+                      degrees(atan(sinh(mercator(s) + shift_y))), w - shift_x)
+            return "valid_quests", bounds, body(record)
+
+        report = {}
+        with patch("scan_area.MIN_INTERVAL_SECONDS", 0):
+            outcome, data = sweep(page, options, report, body(record), start,
+                                  request_times, next_response, lambda: False)
+        self.assertEqual(outcome, "valid_quests")
+        self.assertLessEqual(len(request_times), MAX_QUEST_REQUESTS)
+        actual = [item["bounds"] for item in report["scan_windows"]]
+        self.assertTrue(circle_coverage(actual, location, 10))
+        self.assertFalse(circle_coverage(actual[:1], location, 10))
+        self.assertEqual(update(self.path, filter_area(data, location, 10)), ("updated", 1))
 
 
 if __name__ == "__main__":

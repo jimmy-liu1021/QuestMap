@@ -6,6 +6,7 @@ from math import asin, cos, degrees, radians, sin
 from pathlib import Path
 
 from convert_data import number
+from plan_area_scan import scan_plan
 from probe_api import ProbeError, replace_snapshot, validate
 from probe_playwright import run
 
@@ -81,11 +82,21 @@ def main():
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[1] / "data/quests.json")
     parser.add_argument("--area-config", type=Path)
     parser.add_argument("--probe-only", action="store_true")
+    parser.add_argument("--plan-output", type=Path, help="write a fixed-zoom plan from the measured rectangle")
+    parser.add_argument("--scan", action="store_true", help="collect all required fixed-zoom viewports")
     args = parser.parse_args()
+    if args.scan and (not args.area_config or args.probe_only):
+        parser.error("--scan requires --area-config and writes only after complete coverage")
+    if args.plan_output and not (args.area_config and args.probe_only):
+        parser.error("--plan-output requires --area-config and --probe-only")
+    if args.plan_output and args.plan_output.resolve() == args.output.resolve():
+        parser.error("plan output must differ from the snapshot path")
     args.headed, args.zoom_once, args.wait_seconds = False, False, 30 if args.area_config else 15
     try:
         if args.area_config:
             args.location, radius = read_area(args.area_config)
+            if args.scan:
+                args.scan_radius = radius
     except (OSError, ValueError, ProbeError):
         print("Update failed: invalid_area_config")
         return 1
@@ -99,11 +110,16 @@ def main():
     try:
         body = candidates[0]
         if args.area_config:
-            covered = covers_circle(report["bounds"], args.location, radius)
+            covered = (report.get("scan_coverage_complete", False) if args.scan else
+                       covers_circle(report["bounds"], args.location, radius))
             body = filter_area(body, args.location, radius)
             count = len(json.loads(body)["fp"])
             print(f"Bounds (north/east/south/west): {report['bounds']}")
             print(f"Radius: {radius:g} km; valid unique rows in radius: {count}; covered: {covered}")
+            if args.plan_output:
+                artifact = scan_plan(args.location, radius, report["bounds"])
+                replace_snapshot(args.plan_output, artifact)
+                print(f"Planned fixed-zoom windows: {artifact['planned_window_count']}")
             if not args.probe_only and not covered:
                 raise ProbeError("area_coverage_incomplete")
         if args.probe_only:
